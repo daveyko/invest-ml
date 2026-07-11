@@ -1,2 +1,0 @@
-# Dagster home configuration for local development.
-# Defaults are fine; this file keeps DAGSTER_HOME pointed at .dagster/.

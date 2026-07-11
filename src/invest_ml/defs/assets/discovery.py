@@ -6,7 +6,12 @@ from datetime import UTC, datetime
 
 from dagster import AssetExecutionContext, MaterializeResult, MetadataValue, asset
 
-from invest_ml.defs.resources import ArtifactStoreResource, PostgresResource, SecBulkResource
+from invest_ml.defs.resources import (
+    ArtifactStoreResource,
+    EquityMarketDataResource,
+    PostgresResource,
+    SecBulkResource,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -507,6 +512,12 @@ def companyfacts_data_profiles(
         raise
 
 
+_UNIVERSE_SOURCE = "candidate_universe"
+_UNIVERSE_NAME = "candidate"
+_UNIVERSE_VERSION = "v1"
+_PROFILE_VERSION = "companyfacts_profile_v1"
+
+
 @asset(
     group_name="discovery",
     deps=["companyfacts_data_profiles"],
@@ -515,10 +526,121 @@ def companyfacts_data_profiles(
 def candidate_universe(
     context: AssetExecutionContext,
     postgres: PostgresResource,
-) -> None:
-    raise NotImplementedError(
-        "TODO: call universe.builder.build_candidate_universe, persist to DB"
+) -> MaterializeResult:
+    """Evaluate all companies and persist effective-dated universe memberships.
+
+    Flow
+    ----
+    1. Load universe config; parse CandidateUniverseConfig.
+    2. Create an IngestionRun.
+    3. Call CandidateUniverseService.materialize() — creates/validates the
+       UniverseDefinition, evaluates all companies, diffs active memberships,
+       and persists changes atomically.
+    4. Mark run succeeded with aggregate statistics.
+    5. On any failure: mark run failed, re-raise.
+    """
+    from datetime import UTC, date, datetime
+
+    from invest_ml.config.loaders import load_universe_config
+    from invest_ml.db.repositories.universe import UniverseRepository
+    from invest_ml.universe.config import CandidateUniverseConfig
+    from invest_ml.universe.service import CandidateUniverseService
+
+    session_factory = postgres.get_session_factory()
+    as_of_date = date.today()
+    t_start = time.monotonic()
+
+    universe_cfg = load_universe_config()
+    config = CandidateUniverseConfig.from_dict(
+        universe_cfg.get("candidate", {}),
+        profile_version=_PROFILE_VERSION,
     )
+
+    # ── 1. Create ingestion run ───────────────────────────────────────────────
+    with session_factory() as session:
+        repo = UniverseRepository(session)
+        run = repo.create_ingestion_run(
+            source=_UNIVERSE_SOURCE,
+            source_uri=f"{_UNIVERSE_NAME}:{_UNIVERSE_VERSION}",
+            started_at=datetime.now(tz=UTC),
+        )
+        session.commit()
+        run_id = run.run_id
+
+    context.log.info("Created IngestionRun %s for candidate_universe", run_id)
+
+    try:
+        # ── 2. Materialize universe ───────────────────────────────────────────
+        service = CandidateUniverseService(session_factory=session_factory)
+        result = service.materialize(
+            as_of_date=as_of_date,
+            universe_name=_UNIVERSE_NAME,
+            universe_version=_UNIVERSE_VERSION,
+            profile_version=config.profile_version,
+            config=config,
+        )
+
+        # ── 3. Mark success ───────────────────────────────────────────────────
+        with session_factory() as session:
+            repo = UniverseRepository(session)
+            repo.succeed_ingestion_run(
+                run_id,
+                entities_checked=result.evaluated_companies,
+                entities_changed=result.newly_included + result.newly_excluded,
+                extra_metadata={
+                    "included": result.included_companies,
+                    "newly_included": result.newly_included,
+                    "already_included": result.already_included,
+                    "newly_excluded": result.newly_excluded,
+                    "exclusion_counts": result.exclusion_counts,
+                    "criteria_hash": result.criteria_hash,
+                    "as_of_date": as_of_date.isoformat(),
+                },
+            )
+            session.commit()
+
+        duration = time.monotonic() - t_start
+        context.log.info(
+            "candidate_universe complete: evaluated=%d included=%d "
+            "newly_included=%d newly_excluded=%d duration=%.1fs",
+            result.evaluated_companies,
+            result.included_companies,
+            result.newly_included,
+            result.newly_excluded,
+            duration,
+        )
+
+        return MaterializeResult(
+            metadata={
+                "universe_id": MetadataValue.text(str(result.universe_id)),
+                "criteria_hash": MetadataValue.text(result.criteria_hash[:16] + "..."),
+                "evaluated_companies": MetadataValue.int(result.evaluated_companies),
+                "included_companies": MetadataValue.int(result.included_companies),
+                "newly_included": MetadataValue.int(result.newly_included),
+                "already_included": MetadataValue.int(result.already_included),
+                "newly_excluded": MetadataValue.int(result.newly_excluded),
+                "as_of_date": MetadataValue.text(as_of_date.isoformat()),
+                "duration_seconds": MetadataValue.float(round(duration, 1)),
+            }
+        )
+
+    except Exception as exc:
+        error_text = f"{type(exc).__name__}: {exc}"
+        context.log.error("candidate_universe failed: %s", error_text)
+        try:
+            with session_factory() as session:
+                repo = UniverseRepository(session)
+                repo.fail_ingestion_run(run_id, error=error_text)
+                session.commit()
+        except Exception:
+            context.log.exception("Could not mark IngestionRun %s as failed", run_id)
+        raise
+
+
+_MARKET_DATA_SOURCE = "company_market_profiles"
+_MARKET_PROFILE_VERSION = "market_profile_v1"
+_MARKET_UNIVERSE_NAME = "candidate"
+_MARKET_UNIVERSE_VERSION = "v1"
 
 
 @asset(
@@ -529,10 +651,79 @@ def candidate_universe(
 def company_market_profiles(
     context: AssetExecutionContext,
     postgres: PostgresResource,
-    artifact_store: ArtifactStoreResource,
-) -> None:
-    raise NotImplementedError(
-        "TODO: fetch price bars per candidate, call market.profiler.profile_security"
+    equity_market_data: EquityMarketDataResource,
+) -> MaterializeResult:
+    """Fetch EOD bars and compute a market profile for each candidate security.
+
+    Flow
+    ----
+    1. Load market data config.
+    2. Build price provider and optional market-cap provider.
+    3. Call CompanyMarketProfileService.materialize().
+    4. Return MaterializeResult with aggregate statistics.
+    """
+    from datetime import date
+
+    from invest_ml.config.loaders import load_market_data_config
+    from invest_ml.market.service import CompanyMarketProfileService, MarketProfileRunConfig
+
+    session_factory = postgres.get_session_factory()
+    as_of_date = date.today()
+    t_start = time.monotonic()
+
+    market_cfg = load_market_data_config()
+    profiles_cfg = market_cfg.get("market_profiles", {})
+    symbol_overrides = market_cfg.get("market_data", {}).get("symbol_overrides", {})
+
+    run_config = MarketProfileRunConfig(
+        universe_name=profiles_cfg.get("universe_name", _MARKET_UNIVERSE_NAME),
+        universe_version=profiles_cfg.get("universe_version", _MARKET_UNIVERSE_VERSION),
+        profile_version=profiles_cfg.get("profile_version", _MARKET_PROFILE_VERSION),
+        history_lookback_years=profiles_cfg.get("history_lookback_years", 3),
+        refresh_after_days=profiles_cfg.get("refresh_after_days", 30),
+        failed_symbol_retry_after_days=profiles_cfg.get("failed_symbol_retry_after_days", 30),
+        liquidity_lookback_sessions=profiles_cfg.get("liquidity_lookback_sessions", 90),
+        missing_ratio_lookback_years=profiles_cfg.get("missing_ratio_lookback_years", 3),
+        maximum_symbols_per_run=profiles_cfg.get(
+            "maximum_symbols_per_run", equity_market_data.maximum_symbols_per_run
+        ),
+    )
+
+    price_provider = equity_market_data.build_price_provider(symbol_overrides)
+    market_cap_provider = equity_market_data.build_market_cap_provider(symbol_overrides)
+
+    service = CompanyMarketProfileService(
+        session_factory=session_factory,
+        price_provider=price_provider,
+        market_cap_provider=market_cap_provider,
+    )
+
+    result = service.materialize(as_of_date=as_of_date, config=run_config)
+
+    duration = time.monotonic() - t_start
+    context.log.info(
+        "company_market_profiles complete: targets=%d succeeded=%d "
+        "not_found=%d temp_failure=%d duration=%.1fs",
+        result.targets_found,
+        result.profiles_succeeded,
+        result.profiles_not_found,
+        result.profiles_temporary_failure,
+        duration,
+    )
+
+    return MaterializeResult(
+        metadata={
+            "targets_found": MetadataValue.int(result.targets_found),
+            "profiles_succeeded": MetadataValue.int(result.profiles_succeeded),
+            "profiles_not_found": MetadataValue.int(result.profiles_not_found),
+            "profiles_temporary_failure": MetadataValue.int(result.profiles_temporary_failure),
+            "market_cap_disabled": MetadataValue.bool(result.market_cap_disabled),
+            "metadata_requests": MetadataValue.int(result.metadata_requests),
+            "price_requests": MetadataValue.int(result.price_requests),
+            "market_cap_requests": MetadataValue.int(result.market_cap_requests),
+            "as_of_date": MetadataValue.text(as_of_date.isoformat()),
+            "duration_seconds": MetadataValue.float(round(duration, 1)),
+        }
     )
 
 

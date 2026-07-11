@@ -1,12 +1,89 @@
 candidate:
-  exchanges: ["Nasdaq", "NYSE", "NYSE American"]
+  # Universe definition identity
+  name: candidate
+  version: "v1"
+
+  # Exchanges accepted as listing venues.
+  # Strings must match what SEC reports in the submissions feed.
+  supported_exchanges:
+    - Nasdaq
+    - NYSE
+    - NYSE American
+
+  # Maps raw SEC exchange strings to canonical names in supported_exchanges.
+  # Any raw value absent from this map is treated as unsupported.
+  exchange_aliases:
+    Nasdaq: Nasdaq
+    NASDAQ: Nasdaq
+    NasdaqCM: Nasdaq
+    NasdaqGM: Nasdaq
+    NasdaqGS: Nasdaq
+    NYSE: NYSE
+    "New York Stock Exchange": NYSE
+    NYSE American: NYSE American
+    NYSEAMER: NYSE American
+    AMEX: NYSE American
+    "NYSE MKT": NYSE American
+
+  # Only companies with one of these entity_type values are included (case-insensitive).
+  allowed_entity_types:
+    - operating
+
+  # Companies whose entity_type exactly matches these values get the specific
+  # 'excluded_entity_type' reason code (still excluded, but with more detail).
+  excluded_exact_entity_types:
+    - investment-manager
+    - pooled-investment-fund
+    - limited-partnership
+    - blank-check
+    - special-purpose-acquisition-company
+    - other-spac
+
+  # Exclude companies with NULL entity_type to avoid including unclassified shells.
+  exclude_missing_entity_type: true
+
+  # Require at least one currently-observed SEC ticker for the company.
   require_current_ticker: true
-  require_recent_filing_months: 18
-  exclude_security_types:
-    - etf
-    - fund
-    - spac
-    - shell
+
+  # Require a CompanyDataProfile row for the configured profile_version.
+  require_company_data_profile: true
+
+  # Exclude companies whose most recent SEC filing is older than this many months.
+  recent_filing_months: 18
+
+  # Exclude companies with NULL latest_filing_date (no known filing history).
+  exclude_missing_recent_filing: true
+
+  # SIC codes associated with investment vehicles, holding shells, and blank-check companies.
+  # These supplement entity_type checks — some funds file as "operating".
+  excluded_sic_codes:
+    - "6726"  # Investment Offices, NEC (holding companies, blank-check shells)
+    - "6770"  # Blank Checks
+    - "6189"  # Asset-backed Securities
+    - "6199"  # Finance Services (generic catch-all for unclassified financials)
+    - "6321"  # Hospital and Medical Service Plans (some fund structures)
+    - "6371"  # Pension, Health, and Welfare Funds
+
+  # Python regex patterns (re.IGNORECASE) matched against legal_name.
+  # First match short-circuits; reason code = excluded_name_pattern.
+  excluded_name_patterns:
+    - "\\bETF\\b"
+    - "\\bSPAC\\b"
+    - "(?:acquisition|acq)\\.?\\s+corp"
+    - "blank check"
+    - "\\bfund\\b"
+    - "\\btrust\\b(?!\\s+company)"
+
+  # CIKs always excluded regardless of other criteria (hard block, zero exceptions).
+  always_exclude_ciks: []
+
+  # CIKs always included even if one or more checks would normally exclude them.
+  # Waived exclusion reasons are still recorded in the membership row for observability.
+  always_include_ciks: []
+
+  # Profile version string used to match company_data_profiles rows produced by the
+  # companyfacts_data_profiles asset.
+  profile_version: companyfacts_profile_v1
 
 training:
   minimum_annual_periods: 3

@@ -42,7 +42,7 @@ class SecBulkResource(ConfigurableResource):
     )
     # Bulk companyfacts archive used by the companyfacts_data_profiles asset.
     companyfacts_bulk_url: str = Field(
-        default="https://data.sec.gov/Archives/edgar/daily-index/xbrl/companyfacts.zip",
+        default="https://www.sec.gov/Archives/edgar/daily-index/xbrl/companyfacts.zip",
         description="URL of the SEC bulk companyfacts ZIP archive.",
     )
     # Per-company CompanyFacts API endpoint (used by later assets).
@@ -136,6 +136,41 @@ class ArtifactStoreResource(ConfigurableResource):
     def ensure_dirs(self) -> None:
         for d in (self.raw_dir, self.datasets_dir, self.models_dir):
             d.mkdir(parents=True, exist_ok=True)
+
+
+class EquityMarketDataResource(ConfigurableResource):
+    """Configuration for market data fetching (price bars + optional market cap)."""
+
+    market_data_provider: str = Field(default="tiingo")
+    tiingo_api_token: str = EnvVar("TIINGO_API_TOKEN")
+    tiingo_base_url: str = Field(default="https://api.tiingo.com")
+    tiingo_fundamentals_enabled: bool = Field(default=False)
+    tiingo_market_cap_lookback_days: int = Field(default=10)
+    maximum_symbols_per_run: int = Field(default=2500)
+
+    def build_price_provider(self, symbol_overrides: dict | None = None):  # type: ignore[return]
+        from invest_ml.market.providers.factory import create_price_provider
+
+        return create_price_provider(
+            provider_name=self.market_data_provider,
+            api_token=self.tiingo_api_token,
+            base_url=self.tiingo_base_url,
+            fundamentals_enabled=self.tiingo_fundamentals_enabled,
+            symbol_overrides=symbol_overrides,
+        )
+
+    def build_market_cap_provider(self, symbol_overrides: dict | None = None):  # type: ignore[return]
+        if not self.tiingo_fundamentals_enabled:
+            return None
+        from invest_ml.market.providers.factory import create_market_cap_provider
+
+        return create_market_cap_provider(
+            provider_name=self.market_data_provider,
+            api_token=self.tiingo_api_token,
+            base_url=self.tiingo_base_url,
+            market_cap_lookback_days=self.tiingo_market_cap_lookback_days,
+            symbol_overrides=symbol_overrides,
+        )
 
 
 def _sha256_file(path: Path) -> str:
