@@ -38,3 +38,7 @@ def load_features_config(version: str = "v1") -> dict[str, Any]:
 
 def load_target_spec(version: str = "v1") -> dict[str, Any]:
     return _load_yaml(f"target_{version}.yaml")
+
+
+def load_market_data_config(version: str = "v1") -> dict[str, Any]:
+    return _load_yaml(f"market_data_{version}.yaml")

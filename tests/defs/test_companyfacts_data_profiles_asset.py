@@ -82,7 +82,7 @@ def _make_postgres(session_factory) -> MagicMock:
 def _make_sec_bulk(tmp_path: Path, *, retain: bool = False) -> MagicMock:
     sb = MagicMock()
     sb.companyfacts_bulk_url = (
-        "https://data.sec.gov/Archives/edgar/daily-index/xbrl/companyfacts.zip"
+        "https://www.sec.gov/Archives/edgar/daily-index/xbrl/companyfacts.zip"
     )
     sb.download_dir_path = tmp_path
     sb.max_zip_member_bytes = 50 * 1024 * 1024

@@ -1,0 +1,14 @@
+market_data:
+  provider: tiingo
+  symbol_overrides: {}
+
+market_profiles:
+  profile_version: market_profile_v1
+  universe_name: candidate
+  universe_version: v1
+  history_lookback_years: 3
+  refresh_after_days: 30
+  failed_symbol_retry_after_days: 30
+  liquidity_lookback_sessions: 90
+  missing_ratio_lookback_years: 3
+  maximum_symbols_per_run: 2500

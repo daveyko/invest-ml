@@ -25,8 +25,9 @@ def test_universe_config_loads() -> None:
     assert "scoring" in cfg
 
     candidate = cfg["candidate"]
-    assert "exchanges" in candidate
-    assert len(candidate["exchanges"]) > 0
+    assert "supported_exchanges" in candidate
+    assert len(candidate["supported_exchanges"]) > 0
+    assert "exchange_aliases" in candidate
 
     training = cfg["training"]
     assert training["minimum_annual_periods"] > 0
