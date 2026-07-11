@@ -1,0 +1,209 @@
+# Individual feature definitions.
+# Each feature must be versioned.  Changing formula, lookback, or inputs
+# requires a new version; downstream feature_set_definitions must then be
+# updated to reference the new version.
+#
+# point_in_time_rule: constraint that must hold when constructing the feature.
+#   All financial inputs must have available_at <= as_of_date.
+#   Price inputs must have trading_date <= as_of_date.
+
+features:
+  # ── Fundamental ────────────────────────────────────────────────────────────
+
+  latest_revenue_growth_yoy:
+    version: v1
+    description: "Year-over-year revenue growth using the most recent annual period vs. prior year."
+    inputs:
+      - canonical_metric: revenue
+        period_type: annual
+    lookback: 24 months
+    point_in_time_rule: "Use revenue with available_at <= as_of_date."
+
+  revenue_cagr_3y:
+    version: v1
+    description: "3-year compound annual growth rate of revenue."
+    inputs:
+      - canonical_metric: revenue
+        period_type: annual
+    lookback: 48 months
+    point_in_time_rule: "Use revenue with available_at <= as_of_date."
+
+  operating_margin_ttm:
+    version: v1
+    description: "Trailing-twelve-month operating income / revenue."
+    inputs:
+      - canonical_metric: operating_income
+        period_type: ttm
+      - canonical_metric: revenue
+        period_type: ttm
+    lookback: 15 months
+    point_in_time_rule: "Use TTM metrics with available_at <= as_of_date."
+
+  fcf_margin_ttm:
+    version: v1
+    description: "Trailing-twelve-month free cash flow (OCF - capex) / revenue."
+    inputs:
+      - canonical_metric: operating_cash_flow
+        period_type: ttm
+      - canonical_metric: capex
+        period_type: ttm
+      - canonical_metric: revenue
+        period_type: ttm
+    lookback: 15 months
+    point_in_time_rule: "Use TTM metrics with available_at <= as_of_date."
+
+  share_dilution_yoy:
+    version: v1
+    description: "Year-over-year change in diluted share count (positive = dilution)."
+    inputs:
+      - canonical_metric: diluted_shares
+        period_type: annual
+    lookback: 24 months
+    point_in_time_rule: "Use diluted_shares with available_at <= as_of_date."
+
+  net_cash_to_market_cap:
+    version: v1
+    description: "(Cash - long_term_debt) / market_cap as of as_of_date."
+    inputs:
+      - canonical_metric: cash
+        period_type: quarter
+      - canonical_metric: long_term_debt
+        period_type: quarter
+      - price: market_cap
+    lookback: 6 months
+    point_in_time_rule: "Use balance sheet metrics and price with data as of <= as_of_date."
+
+  price_to_sales_ttm:
+    version: v1
+    description: "Market cap / trailing-twelve-month revenue."
+    inputs:
+      - price: market_cap
+      - canonical_metric: revenue
+        period_type: ttm
+    lookback: 15 months
+    point_in_time_rule: "Use TTM revenue and price with data as of <= as_of_date."
+
+  # ── Price momentum ──────────────────────────────────────────────────────────
+
+  return_3m:
+    version: v1
+    description: "Adjusted price return over the prior 3 months (63 trading days)."
+    inputs:
+      - price: adjusted_close
+    lookback: 63 trading_days
+    point_in_time_rule: "Use adjusted_close with trading_date <= as_of_date."
+
+  return_6m:
+    version: v1
+    description: "Adjusted price return over the prior 6 months (126 trading days)."
+    inputs:
+      - price: adjusted_close
+    lookback: 126 trading_days
+    point_in_time_rule: "Use adjusted_close with trading_date <= as_of_date."
+
+  return_12m:
+    version: v1
+    description: "Adjusted price return over the prior 12 months (252 trading days)."
+    inputs:
+      - price: adjusted_close
+    lookback: 252 trading_days
+    point_in_time_rule: "Use adjusted_close with trading_date <= as_of_date."
+
+  drawdown_from_52w_high:
+    version: v1
+    description: "Current adjusted price relative to the 52-week high (negative = below high)."
+    inputs:
+      - price: adjusted_close
+    lookback: 252 trading_days
+    point_in_time_rule: "Use adjusted_close with trading_date <= as_of_date."
+
+  volatility_12m:
+    version: v1
+    description: "Annualised standard deviation of daily log returns over 252 trading days."
+    inputs:
+      - price: adjusted_close
+    lookback: 252 trading_days
+    point_in_time_rule: "Use adjusted_close with trading_date <= as_of_date."
+
+  # ── Market context ──────────────────────────────────────────────────────────
+
+  spy_return_6m:
+    version: v1
+    description: "6-month return of SPY (S&P 500 ETF) ending on as_of_date."
+    inputs:
+      - price: adjusted_close
+        ticker: SPY
+    lookback: 126 trading_days
+    point_in_time_rule: "Use SPY adjusted_close with trading_date <= as_of_date."
+
+  qqq_return_6m:
+    version: v1
+    description: "6-month return of QQQ (Nasdaq-100 ETF) ending on as_of_date."
+    inputs:
+      - price: adjusted_close
+        ticker: QQQ
+    lookback: 126 trading_days
+    point_in_time_rule: "Use QQQ adjusted_close with trading_date <= as_of_date."
+
+  sector_return_6m:
+    version: v1
+    description: "6-month equal-weight return of the company's model_bucket peer group."
+    inputs:
+      - price: adjusted_close
+        group: model_bucket_peers
+    lookback: 126 trading_days
+    point_in_time_rule: "Use peer adjusted_close with trading_date <= as_of_date."
+
+  relative_strength_vs_sector_6m:
+    version: v1
+    description: "return_6m minus sector_return_6m for the same period."
+    inputs:
+      - feature: return_6m
+        version: v1
+      - feature: sector_return_6m
+        version: v1
+    lookback: 126 trading_days
+    point_in_time_rule: "Derived from other point-in-time features."
+
+  # ── Categorical / context ───────────────────────────────────────────────────
+
+  model_bucket:
+    version: v1
+    description: "The model_bucket classification (e.g. 'semiconductors') as a categorical label."
+    inputs:
+      - classification: model_bucket
+    lookback: null
+    point_in_time_rule: "Use the effective classification as of as_of_date."
+
+  years_of_financial_history:
+    version: v1
+    description: "Number of years between first_period_end and as_of_date in the data profile."
+    inputs:
+      - data_profile: first_period_end
+    lookback: null
+    point_in_time_rule: "Based on data profile scanned before as_of_date."
+
+# Feature set: the exact collection used to build snapshots.
+# Changing any member version requires a new feature_set version.
+feature_set:
+  name: invest_ml_v1
+  version: v1
+  members:
+    - {name: latest_revenue_growth_yoy, version: v1}
+    - {name: revenue_cagr_3y, version: v1}
+    - {name: operating_margin_ttm, version: v1}
+    - {name: fcf_margin_ttm, version: v1}
+    - {name: share_dilution_yoy, version: v1}
+    - {name: net_cash_to_market_cap, version: v1}
+    - {name: price_to_sales_ttm, version: v1}
+    - {name: return_3m, version: v1}
+    - {name: return_6m, version: v1}
+    - {name: return_12m, version: v1}
+    - {name: drawdown_from_52w_high, version: v1}
+    - {name: volatility_12m, version: v1}
+    - {name: spy_return_6m, version: v1}
+    - {name: qqq_return_6m, version: v1}
+    - {name: sector_return_6m, version: v1}
+    - {name: relative_strength_vs_sector_6m, version: v1}
+    - {name: model_bucket, version: v1}
+    - {name: years_of_financial_history, version: v1}

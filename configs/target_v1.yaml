@@ -1,0 +1,6 @@
+name: return_threshold
+version: v1
+horizon_months: 12
+return_threshold: 0.15
+definition:
+  label: "Adjusted price return is at least 15% over the following 12 months."

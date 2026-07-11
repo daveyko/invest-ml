@@ -1,0 +1,37 @@
+candidate:
+  exchanges: ["Nasdaq", "NYSE", "NYSE American"]
+  require_current_ticker: true
+  require_recent_filing_months: 18
+  exclude_security_types:
+    - etf
+    - fund
+    - spac
+    - shell
+
+training:
+  minimum_annual_periods: 3
+  minimum_price_history_years: 3
+  minimum_canonical_metric_coverage: 0.80
+  minimum_median_daily_dollar_volume: 2000000
+
+scoring:
+  model_buckets:
+    - semiconductors
+    - software_and_data
+    - networking_and_hardware
+    - fintech_and_capital_markets
+    - automation_and_instruments
+    - power_and_grid
+  always_include:
+    - COIN
+    - NVDA
+    - AMD
+    - AVGO
+    - MSFT
+    - GOOGL
+    - META
+    - AMZN
+    - CRWD
+    - PLTR
+    - HOOD
+    - MSTR

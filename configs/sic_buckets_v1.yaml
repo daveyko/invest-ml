@@ -1,0 +1,18 @@
+model_buckets:
+  semiconductors:
+    sic_codes: ["3674"]
+
+  software_and_data:
+    sic_codes: ["7370", "7371", "7372", "7373", "7374", "7379"]
+
+  networking_and_hardware:
+    sic_codes: ["3570", "3571", "3572", "3576", "3577", "3661", "3663", "3669"]
+
+  fintech_and_capital_markets:
+    sic_codes: ["6199", "6211", "6282"]
+
+  automation_and_instruments:
+    sic_codes: ["3559", "3569", "3823", "3825"]
+
+  power_and_grid:
+    sic_codes: ["4911", "4931"]

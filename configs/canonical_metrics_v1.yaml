@@ -1,0 +1,196 @@
+# Ordered tag candidates: earlier entries are preferred when multiple tags match.
+# unit: expected unit string from XBRL data (USD, shares, etc.)
+# duration: true = flow metric (income, cash flow), false = instant/balance-sheet metric
+# allows_ttm: whether trailing-twelve-months aggregation is valid
+# allows_formula: whether derived values (e.g. free cash flow = OCF - capex) are permitted
+
+metrics:
+  revenue:
+    tags:
+      - Revenues
+      - RevenueFromContractWithCustomerExcludingAssessedTax
+      - RevenueFromContractWithCustomerIncludingAssessedTax
+      - SalesRevenueNet
+      - SalesRevenueGoodsNet
+    unit: USD
+    duration: true
+    allows_ttm: true
+    allows_formula: false
+
+  operating_income:
+    tags:
+      - OperatingIncomeLoss
+      - IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest
+    unit: USD
+    duration: true
+    allows_ttm: true
+    allows_formula: true
+
+  net_income:
+    tags:
+      - NetIncomeLoss
+      - NetIncomeLossAvailableToCommonStockholdersBasic
+      - ProfitLoss
+    unit: USD
+    duration: true
+    allows_ttm: true
+    allows_formula: false
+
+  operating_cash_flow:
+    tags:
+      - NetCashProvidedByUsedInOperatingActivities
+      - NetCashProvidedByUsedInOperatingActivitiesContinuingOperations
+    unit: USD
+    duration: true
+    allows_ttm: true
+    allows_formula: false
+
+  capex:
+    tags:
+      - PaymentsToAcquirePropertyPlantAndEquipment
+      - PaymentsForCapitalImprovements
+      - CapitalExpenditureDiscontinuedOperations
+    unit: USD
+    duration: true
+    allows_ttm: true
+    # free_cash_flow = operating_cash_flow - capex (formula permitted)
+    allows_formula: true
+
+  cash:
+    tags:
+      - CashAndCashEquivalentsAtCarryingValue
+      - CashCashEquivalentsAndShortTermInvestments
+      - CashAndCashEquivalentsAndRestrictedCash
+    unit: USD
+    duration: false
+    allows_ttm: false
+    allows_formula: false
+
+  total_assets:
+    tags:
+      - Assets
+    unit: USD
+    duration: false
+    allows_ttm: false
+    allows_formula: false
+
+  total_liabilities:
+    tags:
+      - Liabilities
+      - LiabilitiesAndStockholdersEquity
+    unit: USD
+    duration: false
+    allows_ttm: false
+    allows_formula: false
+
+  stockholders_equity:
+    tags:
+      - StockholdersEquity
+      - StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest
+    unit: USD
+    duration: false
+    allows_ttm: false
+    allows_formula: true
+
+  long_term_debt:
+    tags:
+      - LongTermDebt
+      - LongTermDebtNoncurrent
+      - LongTermNotesPayable
+    unit: USD
+    duration: false
+    allows_ttm: false
+    allows_formula: false
+
+  diluted_shares:
+    tags:
+      - WeightedAverageNumberOfDilutedSharesOutstanding
+      - CommonStockSharesOutstanding
+    unit: shares
+    duration: true
+    allows_ttm: false
+    allows_formula: false
+
+# Profiling configuration used during the companyfacts_data_profiles scan.
+# Defines the 7 coverage metrics, accepted SEC form types, and concept
+# (taxonomy + tag + unit) mappings for each profiling metric.
+profiling:
+  # Seven metrics required for canonical_metric_coverage = n_present / 7.
+  required_metrics:
+    - revenue
+    - operating_income
+    - net_income
+    - operating_cash_flow
+    - cash
+    - debt
+    - shares
+
+  # Filing form types used to count unique annual/quarterly periods.
+  annual_forms:
+    - 10-K
+    - 10-K/A
+    - 20-F
+    - 20-F/A
+    - 40-F
+    - 40-F/A
+  quarterly_forms:
+    - 10-Q
+    - 10-Q/A
+
+  # Per-profiling-metric accepted concepts.  Order is significant: first
+  # matching concept wins if multiple tags coexist in the same payload.
+  metrics:
+    revenue:
+      period_kind: duration
+      units: [USD]
+      concepts:
+        - {taxonomy: us-gaap, tag: RevenueFromContractWithCustomerExcludingAssessedTax}
+        - {taxonomy: us-gaap, tag: Revenues}
+        - {taxonomy: us-gaap, tag: RevenueFromContractWithCustomerIncludingAssessedTax}
+        - {taxonomy: us-gaap, tag: SalesRevenueNet}
+        - {taxonomy: us-gaap, tag: SalesRevenueGoodsNet}
+
+    operating_income:
+      period_kind: duration
+      units: [USD]
+      concepts:
+        - {taxonomy: us-gaap, tag: OperatingIncomeLoss}
+        - {taxonomy: us-gaap, tag: IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest}
+
+    net_income:
+      period_kind: duration
+      units: [USD]
+      concepts:
+        - {taxonomy: us-gaap, tag: NetIncomeLoss}
+        - {taxonomy: us-gaap, tag: NetIncomeLossAvailableToCommonStockholdersBasic}
+        - {taxonomy: us-gaap, tag: ProfitLoss}
+
+    operating_cash_flow:
+      period_kind: duration
+      units: [USD]
+      concepts:
+        - {taxonomy: us-gaap, tag: NetCashProvidedByUsedInOperatingActivities}
+        - {taxonomy: us-gaap, tag: NetCashProvidedByUsedInOperatingActivitiesContinuingOperations}
+
+    cash:
+      period_kind: instant
+      units: [USD]
+      concepts:
+        - {taxonomy: us-gaap, tag: CashAndCashEquivalentsAtCarryingValue}
+        - {taxonomy: us-gaap, tag: CashCashEquivalentsAndShortTermInvestments}
+        - {taxonomy: us-gaap, tag: CashAndCashEquivalentsAndRestrictedCash}
+
+    debt:
+      period_kind: instant
+      units: [USD]
+      concepts:
+        - {taxonomy: us-gaap, tag: LongTermDebt}
+        - {taxonomy: us-gaap, tag: LongTermDebtNoncurrent}
+        - {taxonomy: us-gaap, tag: LongTermNotesPayable}
+
+    shares:
+      period_kind: duration
+      units: [shares]
+      concepts:
+        - {taxonomy: us-gaap, tag: WeightedAverageNumberOfDilutedSharesOutstanding}
+        - {taxonomy: us-gaap, tag: CommonStockSharesOutstanding}
