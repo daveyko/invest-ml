@@ -1,115 +1,193 @@
-# Ordered tag candidates: earlier entries are preferred when multiple tags match.
-# unit: expected unit string from XBRL data (USD, shares, etc.)
-# duration: true = flow metric (income, cash flow), false = instant/balance-sheet metric
-# allows_ttm: whether trailing-twelve-months aggregation is valid
-# allows_formula: whether derived values (e.g. free cash flow = OCF - capex) are permitted
+# 16 canonical financial metrics with normalization rules.
+# available_at = filed_date (point-in-time invariant).
+# Amendments are preserved as separate rows indexed by available_at.
+
+version: canonical_metrics_v1
+
+defaults:
+  annual_forms:
+    - 10-K
+    - 10-K/A
+    - 20-F
+    - 20-F/A
+    - 40-F
+    - 40-F/A
+  quarterly_forms:
+    - 10-Q
+    - 10-Q/A
+  annual_duration_days:
+    min: 300
+    max: 430
+  quarterly_duration_days:
+    min: 60
+    max: 120
 
 metrics:
+  # ─── Duration (flow) metrics ─────────────────────────────────────────────────
+
   revenue:
-    tags:
-      - Revenues
-      - RevenueFromContractWithCustomerExcludingAssessedTax
-      - RevenueFromContractWithCustomerIncludingAssessedTax
-      - SalesRevenueNet
-      - SalesRevenueGoodsNet
-    unit: USD
-    duration: true
-    allows_ttm: true
-    allows_formula: false
+    period_kind: duration
+    expected_units: [USD]
+    concepts:
+      - taxonomy: us-gaap
+        tag: RevenueFromContractWithCustomerExcludingAssessedTax
+        priority: 1
+      - taxonomy: us-gaap
+        tag: Revenues
+        priority: 2
+      - taxonomy: us-gaap
+        tag: SalesRevenueNet
+        priority: 3
+
+  gross_profit:
+    period_kind: duration
+    expected_units: [USD]
+    concepts:
+      - taxonomy: us-gaap
+        tag: GrossProfit
+        priority: 1
 
   operating_income:
-    tags:
-      - OperatingIncomeLoss
-      - IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest
-    unit: USD
-    duration: true
-    allows_ttm: true
-    allows_formula: true
+    period_kind: duration
+    expected_units: [USD]
+    concepts:
+      - taxonomy: us-gaap
+        tag: OperatingIncomeLoss
+        priority: 1
 
   net_income:
-    tags:
-      - NetIncomeLoss
-      - NetIncomeLossAvailableToCommonStockholdersBasic
-      - ProfitLoss
-    unit: USD
-    duration: true
-    allows_ttm: true
-    allows_formula: false
+    period_kind: duration
+    expected_units: [USD]
+    concepts:
+      - taxonomy: us-gaap
+        tag: NetIncomeLoss
+        priority: 1
+      - taxonomy: us-gaap
+        tag: ProfitLoss
+        priority: 2
 
   operating_cash_flow:
-    tags:
-      - NetCashProvidedByUsedInOperatingActivities
-      - NetCashProvidedByUsedInOperatingActivitiesContinuingOperations
-    unit: USD
-    duration: true
-    allows_ttm: true
-    allows_formula: false
+    period_kind: duration
+    expected_units: [USD]
+    concepts:
+      - taxonomy: us-gaap
+        tag: NetCashProvidedByUsedInOperatingActivities
+        priority: 1
 
-  capex:
-    tags:
-      - PaymentsToAcquirePropertyPlantAndEquipment
-      - PaymentsForCapitalImprovements
-      - CapitalExpenditureDiscontinuedOperations
-    unit: USD
-    duration: true
-    allows_ttm: true
-    # free_cash_flow = operating_cash_flow - capex (formula permitted)
-    allows_formula: true
+  capital_expenditures:
+    period_kind: duration
+    expected_units: [USD]
+    # XBRL PaymentsTo* tags are positive amounts (cash outflows stated as absolute
+    # values). Canonical value >= 0 means cash spent. No sign flip applied.
+    concepts:
+      - taxonomy: us-gaap
+        tag: PaymentsToAcquirePropertyPlantAndEquipment
+        priority: 1
+      - taxonomy: us-gaap
+        tag: PaymentsForAdditionsToPropertyPlantAndEquipment
+        priority: 2
 
-  cash:
-    tags:
-      - CashAndCashEquivalentsAtCarryingValue
-      - CashCashEquivalentsAndShortTermInvestments
-      - CashAndCashEquivalentsAndRestrictedCash
-    unit: USD
-    duration: false
-    allows_ttm: false
-    allows_formula: false
+  research_and_development_expense:
+    period_kind: duration
+    expected_units: [USD]
+    concepts:
+      - taxonomy: us-gaap
+        tag: ResearchAndDevelopmentExpense
+        priority: 1
 
-  total_assets:
-    tags:
-      - Assets
-    unit: USD
-    duration: false
-    allows_ttm: false
-    allows_formula: false
+  stock_based_compensation:
+    period_kind: duration
+    expected_units: [USD]
+    concepts:
+      - taxonomy: us-gaap
+        tag: ShareBasedCompensation
+        priority: 1
+      - taxonomy: us-gaap
+        tag: AllocatedShareBasedCompensationExpense
+        priority: 2
 
-  total_liabilities:
-    tags:
-      - Liabilities
-      - LiabilitiesAndStockholdersEquity
-    unit: USD
-    duration: false
-    allows_ttm: false
-    allows_formula: false
+  diluted_weighted_average_shares:
+    period_kind: duration
+    expected_units: [shares]
+    concepts:
+      - taxonomy: us-gaap
+        tag: WeightedAverageNumberOfDilutedSharesOutstanding
+        priority: 1
 
-  stockholders_equity:
-    tags:
-      - StockholdersEquity
-      - StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest
-    unit: USD
-    duration: false
-    allows_ttm: false
-    allows_formula: true
+  # ─── Instant (balance-sheet) metrics ─────────────────────────────────────────
+
+  cash_and_cash_equivalents:
+    period_kind: instant
+    expected_units: [USD]
+    # Priority 1 excludes restricted cash; priority 2 includes it.
+    # Prefer the narrower definition; derivation records which tag was selected.
+    concepts:
+      - taxonomy: us-gaap
+        tag: CashAndCashEquivalentsAtCarryingValue
+        priority: 1
+      - taxonomy: us-gaap
+        tag: CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents
+        priority: 2
+
+  debt_current:
+    period_kind: instant
+    expected_units: [USD]
+    concepts:
+      - taxonomy: us-gaap
+        tag: ShortTermBorrowings
+        priority: 1
+      - taxonomy: us-gaap
+        tag: LongTermDebtCurrent
+        priority: 2
 
   long_term_debt:
-    tags:
-      - LongTermDebt
-      - LongTermDebtNoncurrent
-      - LongTermNotesPayable
-    unit: USD
-    duration: false
-    allows_ttm: false
-    allows_formula: false
+    period_kind: instant
+    expected_units: [USD]
+    concepts:
+      - taxonomy: us-gaap
+        tag: LongTermDebtNoncurrent
+        priority: 1
+      - taxonomy: us-gaap
+        tag: LongTermDebt
+        priority: 2
 
-  diluted_shares:
-    tags:
-      - WeightedAverageNumberOfDilutedSharesOutstanding
-      - CommonStockSharesOutstanding
-    unit: shares
-    duration: true
-    allows_ttm: false
-    allows_formula: false
+  total_assets:
+    period_kind: instant
+    expected_units: [USD]
+    concepts:
+      - taxonomy: us-gaap
+        tag: Assets
+        priority: 1
+
+  total_liabilities:
+    period_kind: instant
+    expected_units: [USD]
+    concepts:
+      - taxonomy: us-gaap
+        tag: Liabilities
+        priority: 1
+
+  stockholders_equity:
+    period_kind: instant
+    expected_units: [USD]
+    concepts:
+      - taxonomy: us-gaap
+        tag: StockholdersEquity
+        priority: 1
+      - taxonomy: us-gaap
+        tag: StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest
+        priority: 2
+
+  shares_outstanding:
+    period_kind: instant
+    expected_units: [shares]
+    # dei:EntityCommonStockSharesOutstanding requires the xbrl_facts flattener
+    # to process the dei taxonomy. Coverage is 0 until xbrl_facts is
+    # re-materialized with the updated registry.
+    concepts:
+      - taxonomy: dei
+        tag: EntityCommonStockSharesOutstanding
+        priority: 1
 
 # Profiling configuration used during the companyfacts_data_profiles scan.
 # Defines the 7 coverage metrics, accepted SEC form types, and concept

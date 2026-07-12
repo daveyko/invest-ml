@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import distinct, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -229,8 +230,56 @@ class XbrlFactsRepository:
         ]
 
         stmt = pg_insert(XbrlFact).on_conflict_do_nothing(index_elements=["fact_id"])
-        result = self._s.execute(stmt, rows)
-        inserted = result.rowcount if result.rowcount >= 0 else len(facts)
-        already_existed = len(facts) - inserted
+        self._s.execute(stmt, rows)
 
-        return FactInsertResult(inserted=inserted, already_existed=already_existed)
+        # rowcount is not reliably available on IteratorResult (psycopg3 executemany).
+        # Record the attempted count; the derivation succeeded regardless of conflicts.
+        return FactInsertResult(inserted=len(facts), already_existed=0)
+
+    # ── Canonical metrics candidate streaming ─────────────────────────────────
+
+    def stream_candidate_facts(
+        self,
+        *,
+        taxonomy_tags: list[tuple[str, str]],
+        company_ids: list[UUID] | None = None,
+        batch_size: int = 100,
+    ) -> Iterator[list[XbrlFact]]:
+        """Yield company-batched lists of XbrlFact rows for the given (taxonomy, tag) pairs.
+
+        Finds all distinct company_ids that have at least one relevant fact,
+        then yields facts in batches of batch_size companies.
+        """
+        if not taxonomy_tags:
+            return
+
+        company_query = select(distinct(XbrlFact.company_id)).where(
+            tuple_(XbrlFact.taxonomy, XbrlFact.tag).in_(taxonomy_tags)
+        )
+        if company_ids:
+            company_query = company_query.where(XbrlFact.company_id.in_(company_ids))
+
+        all_company_ids: list[UUID] = list(self._s.execute(company_query).scalars())
+
+        for offset in range(0, len(all_company_ids), batch_size):
+            batch_ids = all_company_ids[offset : offset + batch_size]
+            facts = (
+                self._s.execute(
+                    select(XbrlFact)
+                    .where(
+                        XbrlFact.company_id.in_(batch_ids),
+                        tuple_(XbrlFact.taxonomy, XbrlFact.tag).in_(taxonomy_tags),
+                    )
+                    .order_by(
+                        XbrlFact.company_id,
+                        XbrlFact.taxonomy,
+                        XbrlFact.tag,
+                        XbrlFact.period_end,
+                        XbrlFact.filed_date,
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if facts:
+                yield facts

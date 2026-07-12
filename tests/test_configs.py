@@ -45,21 +45,44 @@ def test_canonical_metrics_loads() -> None:
     from invest_ml.config.loaders import load_canonical_metrics
 
     cfg = load_canonical_metrics()
+    assert "version" in cfg
+    assert "defaults" in cfg
     assert "metrics" in cfg
-    metrics = cfg["metrics"]
 
+    defaults = cfg["defaults"]
+    assert "annual_forms" in defaults and len(defaults["annual_forms"]) > 0
+    assert "quarterly_forms" in defaults and len(defaults["quarterly_forms"]) > 0
+    assert "annual_duration_days" in defaults
+    assert "quarterly_duration_days" in defaults
+
+    metrics = cfg["metrics"]
     required = {
-        "revenue", "operating_income", "net_income", "operating_cash_flow",
-        "capex", "cash", "total_assets", "total_liabilities",
-        "stockholders_equity", "long_term_debt", "diluted_shares",
+        "revenue", "gross_profit", "operating_income", "net_income",
+        "operating_cash_flow", "capital_expenditures", "research_and_development_expense",
+        "stock_based_compensation", "diluted_weighted_average_shares",
+        "cash_and_cash_equivalents", "debt_current", "long_term_debt",
+        "total_assets", "total_liabilities", "stockholders_equity", "shares_outstanding",
     }
+    assert len(metrics) >= len(required), "Expected at least 16 canonical metrics"
     for name in required:
         assert name in metrics, f"Metric '{name}' missing from canonical_metrics config"
         m = metrics[name]
-        assert "tags" in m and len(m["tags"]) > 0
-        assert "unit" in m
-        assert "duration" in m
-        assert "allows_ttm" in m
+        assert "period_kind" in m, f"Metric '{name}' missing period_kind"
+        assert m["period_kind"] in ("duration", "instant"), f"Metric '{name}' invalid period_kind"
+        assert "expected_units" in m and len(m["expected_units"]) > 0, (
+            f"Metric '{name}' missing expected_units"
+        )
+        assert "concepts" in m and len(m["concepts"]) > 0, (
+            f"Metric '{name}' missing concepts"
+        )
+        for concept in m["concepts"]:
+            assert "taxonomy" in concept and concept["taxonomy"], (
+                f"Metric '{name}' concept missing taxonomy"
+            )
+            assert "tag" in concept and concept["tag"], (
+                f"Metric '{name}' concept missing tag"
+            )
+            assert "priority" in concept, f"Metric '{name}' concept missing priority"
 
 
 def test_features_config_loads() -> None:
