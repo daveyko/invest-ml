@@ -46,6 +46,9 @@ class RawSourceVersion(Base):
         nullable=True,
     )
     object_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_locator: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
     payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     byte_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
@@ -57,6 +60,44 @@ class RawSourceVersion(Base):
             "object_uri IS NOT NULL OR payload IS NOT NULL",
             name="ck_raw_source_versions_storage",
         ),
+    )
+
+
+class RawVersionDerivation(Base):
+    """Tracks the status of a derivation pipeline step for a raw source version.
+
+    PK: (raw_version_id, derivation_type, derivation_version)
+    status: running → succeeded | failed
+    """
+
+    __tablename__ = "raw_version_derivations"
+
+    raw_version_id: Mapped[UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "raw_source_versions.raw_version_id",
+            name="fk_raw_version_derivations_version_id",
+        ),
+        primary_key=True,
+        nullable=False,
+    )
+    derivation_type: Mapped[str] = mapped_column(Text, primary_key=True, nullable=False)
+    derivation_version: Mapped[str] = mapped_column(Text, primary_key=True, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    row_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    derivation_metadata: Mapped[dict] = mapped_column(
+        "metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('running', 'succeeded', 'failed')",
+            name="ck_raw_version_derivations_status",
+        ),
+        Index("ix_raw_version_derivations_status", "status"),
     )
 
 

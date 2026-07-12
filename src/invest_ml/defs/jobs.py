@@ -19,11 +19,10 @@ sec_discovery_job = define_asset_job(
 selected_financials_job = define_asset_job(
     name="selected_financials_job",
     selection=AssetSelection.assets(
-        "selected_companyfacts_raw",
         "xbrl_facts",
         "canonical_metrics",
     ),
-    description="Persist and normalize CompanyFacts for training-universe members.",
+    description="Download and flatten CompanyFacts for training-universe members, then normalize into canonical metrics.",
 )
 
 market_refresh_job = define_asset_job(

@@ -421,6 +421,74 @@ class UniverseRepository:
             latest_adjusted_close=_dec(market_profile.latest_adjusted_close) if market_profile else None,
         )
 
+    # ── XBRL ingestion inputs ─────────────────────────────────────────────────
+
+    def list_selected_companies(
+        self,
+        universe_name: str,
+        universe_version: str,
+    ) -> list:
+        """Return active training-universe members as SelectedCompany objects, sorted by CIK.
+
+        Deduplicates by CIK in case the same company appears multiple times.
+        CIKs are zero-padded to 10 digits.
+        """
+        from invest_ml.db.models.company import Company
+        from invest_ml.xbrl.models import SelectedCompany
+
+        universe_def = self._s.execute(
+            select(UniverseDefinition).where(
+                UniverseDefinition.name == universe_name,
+                UniverseDefinition.version == universe_version,
+            )
+        ).scalar_one_or_none()
+        if universe_def is None:
+            return []
+
+        memberships = (
+            self._s.execute(
+                select(UniverseMembership).where(
+                    UniverseMembership.universe_id == universe_def.universe_id,
+                    UniverseMembership.included_until.is_(None),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not memberships:
+            return []
+
+        company_ids = [m.company_id for m in memberships]
+        companies_by_id = {
+            c.company_id: c
+            for c in self._s.execute(
+                select(Company).where(Company.company_id.in_(company_ids))
+            )
+            .scalars()
+            .all()
+        }
+
+        seen_ciks: set[str] = set()
+        result: list[SelectedCompany] = []
+        for m in memberships:
+            company = companies_by_id.get(m.company_id)
+            if company is None:
+                continue
+            cik = (company.cik or "").zfill(10)
+            if cik in seen_ciks:
+                continue
+            seen_ciks.add(cik)
+            result.append(
+                SelectedCompany(
+                    company_id=company.company_id,
+                    cik=cik,
+                    legal_name=company.legal_name,
+                )
+            )
+
+        result.sort(key=lambda c: c.cik)
+        return result
+
     # ── Ingestion run ─────────────────────────────────────────────────────────
 
     def create_ingestion_run(

@@ -1,6 +1,6 @@
 """Verify SQLAlchemy models without connecting to a database.
 
-Tests compile PostgreSQL DDL from metadata and assert all 21 tables are registered.
+Tests compile PostgreSQL DDL from metadata and assert all 22 tables are registered.
 """
 
 import pytest
@@ -18,6 +18,7 @@ EXPECTED_TABLES = {
     "universe_definitions",
     "universe_memberships",
     "raw_source_versions",
+    "raw_version_derivations",
     "xbrl_facts",
     "canonical_metrics",
     "price_bars",

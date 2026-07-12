@@ -17,7 +17,6 @@ from invest_ml.defs.assets.discovery import (
 from invest_ml.defs.assets.features import feature_registry, feature_snapshots
 from invest_ml.defs.assets.financials import (
     canonical_metrics,
-    selected_companyfacts_raw,
     xbrl_facts,
 )
 from invest_ml.defs.assets.market import price_bars
@@ -45,7 +44,6 @@ _all_assets = [
     training_universe,
     scoring_universe,
     # Financial warehouse group
-    selected_companyfacts_raw,
     xbrl_facts,
     canonical_metrics,
     price_bars,
