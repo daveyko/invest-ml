@@ -85,21 +85,79 @@ candidate:
   # companyfacts_data_profiles asset.
   profile_version: companyfacts_profile_v1
 
+# ── Training universe ──────────────────────────────────────────────────────────
+#
+# V1 SURVIVORSHIP-BIAS NOTE
+# This universe is constructed from currently observable public companies and
+# securities. It is suitable for initial pipeline and model development but is
+# not a fully survivorship-bias-free historical universe. A later enhancement
+# should ingest delisted securities, historical ticker intervals, and
+# point-in-time membership.
+
 training:
+  name: training_universe
+  version: "v1"
+
+  # Source universe: only companies with an active candidate membership are evaluated.
+  candidate_universe:
+    name: candidate
+    version: "v1"
+
+  # Profile versions that must match persisted profile rows.
+  company_data_profile_version: companyfacts_profile_v1
+  market_profile_version: market_profile_v1
+
+  # Minimum XBRL financial reporting periods required.
   minimum_annual_periods: 3
-  minimum_price_history_years: 3
+  minimum_quarterly_periods: 0
+
+  # Minimum fraction of canonical metrics that must be present (0.0 – 1.0).
   minimum_canonical_metric_coverage: 0.80
+
+  # Market and investability thresholds for the selected security.
+  minimum_price_history_years: 3
   minimum_median_daily_dollar_volume: 2000000
+  maximum_missing_trading_day_ratio: 0.02
+
+  # Maximum age of market profile before it is considered stale.
+  maximum_market_profile_age_days: 45
+
+  # Quality gates on the market profile row itself.
+  require_market_profile_status: success
+  require_latest_adjusted_close: true
+
+  # Optional market-cap floor. Set to null to disable.
+  # Market cap is informational when null — a company is NOT excluded merely
+  # because current_market_cap IS NULL (Tiingo Fundamentals may be incomplete).
+  minimum_market_cap: null
+
+# ── Scoring universe ───────────────────────────────────────────────────────────
 
 scoring:
-  model_buckets:
+  name: scoring_universe
+  version: "v1"
+
+  # Source universe: only companies with an active training membership are evaluated.
+  training_universe:
+    name: training_universe
+    version: "v1"
+
+  # Model buckets (defined in sic_buckets_v1.yaml) whose SIC codes qualify a company
+  # for scoring. A company matching any listed bucket is included.
+  included_model_buckets:
     - semiconductors
     - software_and_data
     - networking_and_hardware
     - fintech_and_capital_markets
     - automation_and_instruments
     - power_and_grid
-  always_include:
+
+  # Manual inclusions bypass the SIC / model-bucket requirement only.
+  # They do NOT bypass candidate eligibility, data-quality, or market-data rules.
+  # Prefer CIKs for durable configuration; tickers are resolved at run time against
+  # the selected training-universe security and fail if ambiguous.
+  manual_include_ciks: []
+  manual_include_tickers:
     - COIN
     - NVDA
     - AMD
@@ -112,3 +170,7 @@ scoring:
     - PLTR
     - HOOD
     - MSTR
+
+  # Manual exclusions always win over bucket matches and manual inclusions.
+  manual_exclude_ciks: []
+  manual_exclude_tickers: []

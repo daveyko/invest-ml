@@ -175,6 +175,252 @@ class UniverseRepository:
             )
         return result
 
+    # ── Training universe inputs ──────────────────────────────────────────────
+
+    def load_training_company_inputs(
+        self,
+        candidate_universe_name: str,
+        candidate_universe_version: str,
+        company_data_profile_version: str,
+        market_profile_version: str,
+    ) -> list:
+        """Load all candidate members with securities, data profiles, and market profiles.
+
+        Uses 6 targeted queries and Python dicts — no N+1, no Cartesian product.
+        """
+        from collections import defaultdict
+        from decimal import Decimal
+
+        from invest_ml.db.models.company import Company, Security
+        from invest_ml.db.models.profiling import CompanyDataProfile, CompanyMarketProfile
+        from invest_ml.universe.training import TrainingCompanyInput
+
+        # 1. Get active candidate universe definition
+        cand_def = self._s.execute(
+            select(UniverseDefinition).where(
+                UniverseDefinition.name == candidate_universe_name,
+                UniverseDefinition.version == candidate_universe_version,
+            )
+        ).scalar_one_or_none()
+        if cand_def is None:
+            return []
+
+        # 2. Get company IDs with active candidate membership
+        candidate_company_ids: list = list(
+            self._s.execute(
+                select(UniverseMembership.company_id).where(
+                    UniverseMembership.universe_id == cand_def.universe_id,
+                    UniverseMembership.included_until.is_(None),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not candidate_company_ids:
+            return []
+
+        # 3. Load company rows
+        companies_by_id = {
+            c.company_id: c
+            for c in self._s.execute(
+                select(Company).where(Company.company_id.in_(candidate_company_ids))
+            )
+            .scalars()
+            .all()
+        }
+
+        # 4. Load company data profiles for the configured version
+        profiles_by_company = {
+            p.company_id: p
+            for p in self._s.execute(
+                select(CompanyDataProfile).where(
+                    CompanyDataProfile.company_id.in_(candidate_company_ids),
+                    CompanyDataProfile.profile_version == company_data_profile_version,
+                )
+            )
+            .scalars()
+            .all()
+        }
+
+        # 5. Load currently-observed securities
+        securities_by_company: dict = defaultdict(list)
+        all_securities = self._s.execute(
+            select(Security).where(
+                Security.company_id.in_(candidate_company_ids),
+                Security.is_currently_reported_by_sec.is_(True),
+            )
+        ).scalars().all()
+        for s in all_securities:
+            securities_by_company[s.company_id].append(s)
+
+        # 6. Load market profiles for all relevant securities
+        all_security_ids = [s.security_id for s in all_securities]
+        market_profiles_by_security = {}
+        if all_security_ids:
+            for mp in self._s.execute(
+                select(CompanyMarketProfile).where(
+                    CompanyMarketProfile.security_id.in_(all_security_ids),
+                    CompanyMarketProfile.profile_version == market_profile_version,
+                )
+            ).scalars().all():
+                market_profiles_by_security[mp.security_id] = mp
+
+        # 7. Assemble TrainingCompanyInput objects
+        result = []
+        for company_id in candidate_company_ids:
+            company = companies_by_id.get(company_id)
+            if company is None:
+                continue
+            profile = profiles_by_company.get(company_id)
+            raw_securities = securities_by_company.get(company_id, [])
+
+            eligible_securities = tuple(
+                self._build_eligible_security_input(
+                    s, market_profiles_by_security.get(s.security_id)
+                )
+                for s in raw_securities
+            )
+
+            result.append(
+                TrainingCompanyInput(
+                    company_id=company_id,
+                    cik=company.cik,
+                    legal_name=company.legal_name,
+                    candidate_membership_active=True,
+                    company_data_profile_version=(
+                        profile.profile_version if profile else None
+                    ),
+                    annual_periods=profile.annual_periods if profile else 0,
+                    quarterly_periods=profile.quarterly_periods if profile else 0,
+                    canonical_metric_coverage=Decimal(
+                        str(profile.canonical_metric_coverage)
+                    ) if profile and profile.canonical_metric_coverage is not None
+                    else Decimal("0"),
+                    company_data_quality_flags=profile.quality_flags if profile else {},
+                    securities=eligible_securities,
+                )
+            )
+        return result
+
+    def load_scoring_company_inputs(
+        self,
+        training_universe_name: str,
+        training_universe_version: str,
+    ) -> list:
+        """Load training-universe members with SIC codes for scoring evaluation."""
+        from collections import defaultdict
+
+        from invest_ml.db.models.classification import CompanyClassification
+        from invest_ml.db.models.company import Company, Security
+        from invest_ml.universe.scoring import ScoringCompanyInput
+
+        # 1. Get training universe definition
+        training_def = self._s.execute(
+            select(UniverseDefinition).where(
+                UniverseDefinition.name == training_universe_name,
+                UniverseDefinition.version == training_universe_version,
+            )
+        ).scalar_one_or_none()
+        if training_def is None:
+            return []
+
+        # 2. Load active training memberships (these carry security_id)
+        active_memberships = self._s.execute(
+            select(UniverseMembership).where(
+                UniverseMembership.universe_id == training_def.universe_id,
+                UniverseMembership.included_until.is_(None),
+            )
+        ).scalars().all()
+        if not active_memberships:
+            return []
+
+        company_ids = [m.company_id for m in active_memberships]
+        membership_by_company = {m.company_id: m for m in active_memberships}
+
+        # 3. Load company rows
+        companies_by_id = {
+            c.company_id: c
+            for c in self._s.execute(
+                select(Company).where(Company.company_id.in_(company_ids))
+            ).scalars().all()
+        }
+
+        # 4. Load security rows (to get ticker for the selected security)
+        security_ids = [m.security_id for m in active_memberships if m.security_id]
+        securities_by_id = {}
+        if security_ids:
+            for s in self._s.execute(
+                select(Security).where(Security.security_id.in_(security_ids))
+            ).scalars().all():
+                securities_by_id[s.security_id] = s
+
+        # 5. Load active SIC codes
+        sics_by_company: dict = defaultdict(list)
+        for cls_row in self._s.execute(
+            select(CompanyClassification).where(
+                CompanyClassification.company_id.in_(company_ids),
+                CompanyClassification.taxonomy == "sec_sic",
+                CompanyClassification.effective_to.is_(None),
+            )
+        ).scalars().all():
+            sics_by_company[cls_row.company_id].append(cls_row.code)
+
+        # 6. Assemble ScoringCompanyInput objects
+        result = []
+        for company_id in company_ids:
+            company = companies_by_id.get(company_id)
+            membership = membership_by_company[company_id]
+            security = securities_by_id.get(membership.security_id) if membership.security_id else None
+            if company is None or security is None:
+                continue
+
+            result.append(
+                ScoringCompanyInput(
+                    company_id=company_id,
+                    security_id=membership.security_id,
+                    cik=company.cik,
+                    ticker=security.ticker,
+                    legal_name=company.legal_name,
+                    active_sic_codes=tuple(sorted(sics_by_company.get(company_id, []))),
+                    training_inclusion_reasons=membership.inclusion_reasons or {},
+                )
+            )
+        return result
+
+    def _build_eligible_security_input(self, security, market_profile):
+        from decimal import Decimal
+
+        from invest_ml.universe.security_selector import EligibleSecurityInput
+
+        status = None
+        if market_profile and isinstance(market_profile.quality_flags, dict):
+            status = market_profile.quality_flags.get("status")
+
+        def _dec(v):
+            return Decimal(str(v)) if v is not None else None
+
+        return EligibleSecurityInput(
+            security_id=security.security_id,
+            company_id=security.company_id,
+            ticker=security.ticker,
+            exchange=security.exchange,
+            currently_observed=security.is_currently_reported_by_sec,
+            market_profile_version=(
+                market_profile.profile_version if market_profile else None
+            ),
+            market_profile_scanned_at=(
+                market_profile.scanned_at if market_profile else None
+            ),
+            market_profile_status=status,
+            first_price_date=market_profile.first_price_date if market_profile else None,
+            latest_price_date=market_profile.latest_price_date if market_profile else None,
+            price_history_years=_dec(market_profile.price_history_years) if market_profile else None,
+            median_daily_dollar_volume=_dec(market_profile.median_daily_dollar_volume) if market_profile else None,
+            current_market_cap=_dec(market_profile.current_market_cap) if market_profile else None,
+            missing_trading_day_ratio=_dec(market_profile.missing_trading_day_ratio) if market_profile else None,
+            latest_adjusted_close=_dec(market_profile.latest_adjusted_close) if market_profile else None,
+        )
+
     # ── Ingestion run ─────────────────────────────────────────────────────────
 
     def create_ingestion_run(

@@ -727,32 +727,248 @@ def company_market_profiles(
     )
 
 
+_TRAINING_UNIVERSE_SOURCE = "training_universe"
+_SCORING_UNIVERSE_SOURCE = "scoring_universe"
+
+
 @asset(
     group_name="discovery",
     deps=["company_market_profiles"],
-    description="Broad universe of companies with sufficient financial history and liquidity.",
+    description=(
+        "Broad universe of financially eligible companies with a selected representative "
+        "security. Data-quality driven only — no thematic filters."
+    ),
 )
 def training_universe(
     context: AssetExecutionContext,
     postgres: PostgresResource,
-) -> None:
-    raise NotImplementedError(
-        "TODO: call universe.builder.build_training_universe, persist to DB"
-    )
+) -> MaterializeResult:
+    """Evaluate all candidate-universe members and persist training-universe memberships.
+
+    Flow
+    ----
+    1. Parse TrainingUniverseConfig from universe_v1.yaml.
+    2. Create an IngestionRun.
+    3. Call TrainingUniverseService.materialize() — creates/validates the
+       UniverseDefinition, runs deterministic security selection, diffs active
+       memberships, and persists changes atomically.
+    4. Mark run succeeded with aggregate statistics.
+    5. On any failure: mark run failed, re-raise.
+    """
+    from datetime import date
+
+    from invest_ml.config.loaders import load_universe_config
+    from invest_ml.db.repositories.universe import UniverseRepository
+    from invest_ml.universe.service import TrainingUniverseService
+    from invest_ml.universe.training import TrainingUniverseConfig
+
+    session_factory = postgres.get_session_factory()
+    as_of_date = date.today()
+    t_start = time.monotonic()
+
+    universe_cfg = load_universe_config()
+    config = TrainingUniverseConfig.from_dict(universe_cfg.get("training", {}))
+
+    with session_factory() as session:
+        repo = UniverseRepository(session)
+        run = repo.create_ingestion_run(
+            source=_TRAINING_UNIVERSE_SOURCE,
+            source_uri=f"{config.name}:{config.version}",
+            started_at=datetime.now(tz=UTC),
+        )
+        session.commit()
+        run_id = run.run_id
+
+    context.log.info("Created IngestionRun %s for training_universe", run_id)
+
+    try:
+        service = TrainingUniverseService(session_factory=session_factory)
+        result = service.materialize(as_of_date=as_of_date, config=config)
+
+        with session_factory() as session:
+            repo = UniverseRepository(session)
+            repo.succeed_ingestion_run(
+                run_id,
+                entities_checked=result.evaluated_companies,
+                entities_changed=(
+                    result.newly_included
+                    + result.newly_excluded
+                    + result.selected_security_changes
+                ),
+                extra_metadata={
+                    "included": result.included_companies,
+                    "newly_included": result.newly_included,
+                    "already_included": result.already_included,
+                    "newly_excluded": result.newly_excluded,
+                    "selected_security_changes": result.selected_security_changes,
+                    "exclusion_counts": result.exclusion_counts,
+                    "criteria_hash": result.criteria_hash,
+                    "as_of_date": as_of_date.isoformat(),
+                },
+            )
+            session.commit()
+
+        duration = time.monotonic() - t_start
+        context.log.info(
+            "training_universe complete: evaluated=%d included=%d "
+            "newly_included=%d security_changes=%d newly_excluded=%d duration=%.1fs",
+            result.evaluated_companies,
+            result.included_companies,
+            result.newly_included,
+            result.selected_security_changes,
+            result.newly_excluded,
+            duration,
+        )
+
+        return MaterializeResult(
+            metadata={
+                "universe_id": MetadataValue.text(str(result.universe_id)),
+                "criteria_hash": MetadataValue.text(result.criteria_hash[:16] + "..."),
+                "evaluated_companies": MetadataValue.int(result.evaluated_companies),
+                "included_companies": MetadataValue.int(result.included_companies),
+                "newly_included": MetadataValue.int(result.newly_included),
+                "already_included": MetadataValue.int(result.already_included),
+                "newly_excluded": MetadataValue.int(result.newly_excluded),
+                "selected_security_changes": MetadataValue.int(result.selected_security_changes),
+                "as_of_date": MetadataValue.text(as_of_date.isoformat()),
+                "duration_seconds": MetadataValue.float(round(duration, 1)),
+            }
+        )
+
+    except Exception as exc:
+        error_text = f"{type(exc).__name__}: {exc}"
+        context.log.error("training_universe failed: %s", error_text)
+        try:
+            with session_factory() as session:
+                repo = UniverseRepository(session)
+                repo.fail_ingestion_run(run_id, error=error_text)
+                session.commit()
+        except Exception:
+            context.log.exception("Could not mark IngestionRun %s as failed", run_id)
+        raise
 
 
 @asset(
     group_name="discovery",
-    deps=["candidate_universe"],
+    deps=["training_universe"],
     description=(
-        "Narrower scoring universe: AI/crypto/software/semiconductor/fintech/etc. "
-        "plus always_include tickers."
+        "Narrower scoring universe: model-bucket SIC matching (semiconductors, "
+        "software, fintech, etc.) plus manual inclusions."
     ),
 )
 def scoring_universe(
     context: AssetExecutionContext,
     postgres: PostgresResource,
-) -> None:
-    raise NotImplementedError(
-        "TODO: call universe.builder.build_scoring_universe, persist to DB"
-    )
+) -> MaterializeResult:
+    """Filter training-universe members to the scoring universe via SIC buckets.
+
+    Flow
+    ----
+    1. Parse ScoringUniverseConfig and SicBucketConfig from YAML.
+    2. Create an IngestionRun.
+    3. Validate manual ticker configuration (fail early if any ticker is ambiguous).
+    4. Call ScoringUniverseService.materialize() — creates/validates the
+       UniverseDefinition, evaluates all training members, and persists changes.
+    5. Mark run succeeded with aggregate statistics.
+    6. On any failure: mark run failed, re-raise.
+    """
+    from datetime import date
+
+    from invest_ml.config.loaders import load_sic_buckets, load_universe_config
+    from invest_ml.db.repositories.universe import UniverseRepository
+    from invest_ml.universe.scoring import ScoringUniverseConfig, SicBucketConfig
+    from invest_ml.universe.service import ScoringUniverseService
+
+    session_factory = postgres.get_session_factory()
+    as_of_date = date.today()
+    t_start = time.monotonic()
+
+    universe_cfg = load_universe_config()
+    sic_cfg = load_sic_buckets()
+
+    config = ScoringUniverseConfig.from_dict(universe_cfg.get("scoring", {}))
+    sic_buckets = SicBucketConfig.from_dict(sic_cfg)
+
+    with session_factory() as session:
+        repo = UniverseRepository(session)
+        run = repo.create_ingestion_run(
+            source=_SCORING_UNIVERSE_SOURCE,
+            source_uri=f"{config.name}:{config.version}",
+            started_at=datetime.now(tz=UTC),
+        )
+        session.commit()
+        run_id = run.run_id
+
+    context.log.info("Created IngestionRun %s for scoring_universe", run_id)
+
+    try:
+        service = ScoringUniverseService(session_factory=session_factory)
+        result = service.materialize(
+            as_of_date=as_of_date,
+            config=config,
+            sic_buckets=sic_buckets,
+        )
+
+        with session_factory() as session:
+            repo = UniverseRepository(session)
+            repo.succeed_ingestion_run(
+                run_id,
+                entities_checked=result.evaluated_training_members,
+                entities_changed=result.newly_included + result.newly_excluded,
+                extra_metadata={
+                    "included": result.included_companies,
+                    "bucket_inclusions": result.bucket_inclusions,
+                    "manual_inclusions": result.manual_inclusions,
+                    "newly_included": result.newly_included,
+                    "already_included": result.already_included,
+                    "newly_excluded": result.newly_excluded,
+                    "bucket_counts": result.bucket_counts,
+                    "exclusion_counts": result.exclusion_counts,
+                    "criteria_hash": result.criteria_hash,
+                    "as_of_date": as_of_date.isoformat(),
+                },
+            )
+            session.commit()
+
+        duration = time.monotonic() - t_start
+        context.log.info(
+            "scoring_universe complete: evaluated=%d included=%d "
+            "bucket=%d manual=%d newly_included=%d newly_excluded=%d duration=%.1fs",
+            result.evaluated_training_members,
+            result.included_companies,
+            result.bucket_inclusions,
+            result.manual_inclusions,
+            result.newly_included,
+            result.newly_excluded,
+            duration,
+        )
+
+        return MaterializeResult(
+            metadata={
+                "universe_id": MetadataValue.text(str(result.universe_id)),
+                "criteria_hash": MetadataValue.text(result.criteria_hash[:16] + "..."),
+                "evaluated_training_members": MetadataValue.int(
+                    result.evaluated_training_members
+                ),
+                "included_companies": MetadataValue.int(result.included_companies),
+                "bucket_inclusions": MetadataValue.int(result.bucket_inclusions),
+                "manual_inclusions": MetadataValue.int(result.manual_inclusions),
+                "newly_included": MetadataValue.int(result.newly_included),
+                "already_included": MetadataValue.int(result.already_included),
+                "newly_excluded": MetadataValue.int(result.newly_excluded),
+                "as_of_date": MetadataValue.text(as_of_date.isoformat()),
+                "duration_seconds": MetadataValue.float(round(duration, 1)),
+            }
+        )
+
+    except Exception as exc:
+        error_text = f"{type(exc).__name__}: {exc}"
+        context.log.error("scoring_universe failed: %s", error_text)
+        try:
+            with session_factory() as session:
+                repo = UniverseRepository(session)
+                repo.fail_ingestion_run(run_id, error=error_text)
+                session.commit()
+        except Exception:
+            context.log.exception("Could not mark IngestionRun %s as failed", run_id)
+        raise
