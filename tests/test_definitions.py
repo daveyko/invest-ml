@@ -23,7 +23,6 @@ def test_expected_assets_present() -> None:
         "company_market_profiles",
         "training_universe",
         "scoring_universe",
-        "selected_companyfacts_raw",
         "xbrl_facts",
         "canonical_metrics",
         "price_bars",

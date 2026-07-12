@@ -1,56 +1,108 @@
 """Financial warehouse Dagster assets.
 
-These assets persist deep financial data for universe members only:
-  training_universe → selected_companyfacts_raw → xbrl_facts → canonical_metrics
+Asset graph: training_universe → xbrl_facts → canonical_metrics
 """
+
+from datetime import UTC, datetime
 
 from dagster import AssetExecutionContext, asset
 
-from invest_ml.defs.resources import ArtifactStoreResource, PostgresResource, SecBulkResource
+from invest_ml.defs.resources import PostgresResource, SecBulkResource
 
 
 @asset(
     group_name="financial_warehouse",
     deps=["training_universe"],
     description=(
-        "Raw CompanyFacts JSON for each training-universe member, stored in raw_source_versions. "
-        "Only universe members receive deep persistence; broad profiling does not."
-    ),
-)
-def selected_companyfacts_raw(
-    context: AssetExecutionContext,
-    postgres: PostgresResource,
-    sec_bulk: SecBulkResource,
-    artifact_store: ArtifactStoreResource,
-) -> None:
-    """Download and persist CompanyFacts for training-universe companies.
-
-    Not yet implemented.
-    """
-    raise NotImplementedError(
-        "TODO: for each training-universe member, fetch CompanyFacts and insert RawSourceVersion"
-    )
-
-
-@asset(
-    group_name="financial_warehouse",
-    deps=["selected_companyfacts_raw"],
-    description=(
-        "Flattened XBRL facts derived from raw CompanyFacts. "
-        "Ingestion is idempotent via deterministic fact_id hashing."
+        "Flattened XBRL facts for all training-universe members, persisted to xbrl_facts. "
+        "Downloads (or reuses) the SEC bulk companyfacts ZIP, hashes each member, "
+        "registers lineage in raw_source_versions/raw_version_derivations, "
+        "and bulk-inserts facts whose (taxonomy, tag) pair appears in the "
+        "canonical metrics registry. Ingestion is idempotent via deterministic fact_id."
     ),
 )
 def xbrl_facts(
     context: AssetExecutionContext,
     postgres: PostgresResource,
+    sec_bulk: SecBulkResource,
 ) -> None:
-    """Parse raw CompanyFacts into XbrlFact rows and bulk-insert.
+    from invest_ml.config.loaders import load_canonical_metrics, load_universe_config
+    from invest_ml.db.repositories.universe import UniverseRepository
+    from invest_ml.sec.companyfacts_flattener import CompanyFactsFlattener
+    from invest_ml.xbrl.service import XbrlFactsIngestionService
 
-    Not yet implemented.
-    """
-    raise NotImplementedError(
-        "TODO: call sec.parser.parse_company_facts, bulk_insert_ignore into xbrl_facts"
+    universe_cfg = load_universe_config()
+    training_cfg = universe_cfg["training"]
+    universe_name: str = training_cfg["name"]
+    universe_version: str = training_cfg["version"]
+
+    metrics_cfg = load_canonical_metrics()
+    flattener = CompanyFactsFlattener.from_config(metrics_cfg)
+
+    archive_cache = sec_bulk.make_archive_cache()
+    session_factory = postgres.get_session_factory()
+
+    service = XbrlFactsIngestionService(
+        session_factory=session_factory,
+        archive_cache=archive_cache,
+        flattener=flattener,
+        max_member_bytes=sec_bulk.max_zip_member_bytes,
+        force_refresh=sec_bulk.force_refresh,
+        cache_only=sec_bulk.cache_only,
     )
+
+    ingested_at = datetime.now(tz=UTC)
+
+    with session_factory() as session:
+        repo = UniverseRepository(session)
+        run = repo.create_ingestion_run(
+            source="sec_companyfacts",
+            source_uri=sec_bulk.companyfacts_bulk_url,
+            started_at=ingested_at,
+        )
+        session.commit()
+        run_id = run.run_id
+
+    try:
+        result = service.materialize(
+            universe_name=universe_name,
+            universe_version=universe_version,
+            source_run_id=run_id,
+            ingested_at=ingested_at,
+        )
+    except Exception as exc:
+        with session_factory() as session:
+            repo = UniverseRepository(session)
+            repo.fail_ingestion_run(run_id, error=str(exc))
+            session.commit()
+        raise
+
+    with session_factory() as session:
+        repo = UniverseRepository(session)
+        repo.succeed_ingestion_run(
+            run_id,
+            entities_checked=result.members_processed + result.members_skipped_not_found,
+            entities_changed=result.members_succeeded,
+            extra_metadata={
+                "members_processed": result.members_processed,
+                "members_succeeded": result.members_succeeded,
+                "members_failed": result.members_failed,
+                "members_skipped_not_found": result.members_skipped_not_found,
+                "members_skipped_already_done": result.members_skipped_already_done,
+                "total_facts_inserted": result.total_facts_inserted,
+                "derivation_version": result.derivation_version,
+            },
+        )
+        session.commit()
+
+    context.add_output_metadata({
+        "members_processed": result.members_processed,
+        "members_succeeded": result.members_succeeded,
+        "members_failed": result.members_failed,
+        "members_skipped_not_found": result.members_skipped_not_found,
+        "total_facts_inserted": result.total_facts_inserted,
+        "derivation_version": result.derivation_version,
+    })
 
 
 @asset(
@@ -66,10 +118,6 @@ def canonical_metrics(
     context: AssetExecutionContext,
     postgres: PostgresResource,
 ) -> None:
-    """Normalize XBRL facts into canonical metrics per the metrics config.
-
-    Not yet implemented.
-    """
     raise NotImplementedError(
         "TODO: call sec.normalizer.normalize_facts, bulk_insert_ignore into canonical_metrics"
     )

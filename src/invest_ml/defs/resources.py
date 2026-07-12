@@ -58,20 +58,34 @@ class SecBulkResource(ConfigurableResource):
 
     download_dir: str = Field(
         default="var/downloads/sec",
-        description="Local directory for downloaded SEC archives.",
+        description="Local directory for downloaded SEC submissions archive.",
     )
     download_timeout_seconds: int = Field(
         default=300,
-        description="Total read timeout for streaming the submissions archive.",
+        description="Total read timeout for streaming SEC archives.",
     )
     max_retries: int = Field(default=4, description="Max retry attempts on transient errors.")
-    retain_archives: bool = Field(
-        default=False,
-        description="Keep the downloaded ZIP after processing (useful for debugging).",
-    )
     max_zip_member_bytes: int = Field(
         default=50 * 1024 * 1024,  # 50 MB per member
         description="Maximum allowed size of a single ZIP member in bytes.",
+    )
+
+    # CompanyFacts archive cache settings
+    companyfacts_cache_dir: str = Field(
+        default="var/cache/sec/companyfacts",
+        description="Directory for the hash-addressed companyfacts ZIP archive cache.",
+    )
+    companyfacts_remote_check_after_hours: float = Field(
+        default=24.0,
+        description="Hours before re-checking SEC for an updated companyfacts archive.",
+    )
+    force_refresh: bool = Field(
+        default=False,
+        description="Force download of a fresh companyfacts archive on every run.",
+    )
+    cache_only: bool = Field(
+        default=False,
+        description="Never make network requests; fail if no valid cached archive exists.",
     )
 
     def make_client(self):  # type: ignore[no-untyped-def]
@@ -83,6 +97,18 @@ class SecBulkResource(ConfigurableResource):
             download_timeout_seconds=self.download_timeout_seconds,
             max_retries=self.max_retries,
             max_zip_member_bytes=self.max_zip_member_bytes,
+        )
+
+    def make_archive_cache(self):  # type: ignore[no-untyped-def]
+        from invest_ml.sec.archive_cache import SecBulkArchiveCache
+
+        return SecBulkArchiveCache(
+            cache_dir=Path(self.companyfacts_cache_dir),
+            companyfacts_bulk_url=self.companyfacts_bulk_url,
+            user_agent=self.user_agent,
+            remote_check_after_hours=self.companyfacts_remote_check_after_hours,
+            download_timeout_seconds=float(self.download_timeout_seconds),
+            max_retries=self.max_retries,
         )
 
     @property
