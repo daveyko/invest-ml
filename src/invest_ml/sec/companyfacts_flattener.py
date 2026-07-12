@@ -26,21 +26,27 @@ _STANDARD_OBS_FIELDS = frozenset({"end", "filed", "val", "start", "accn", "fy", 
 _FLATTENER_BASE_VERSION = "companyfacts_flattener_v1"
 
 
-def build_fact_registry(canonical_metrics_config: dict) -> dict[str, str]:
-    """Build {tag: metric_name} registry from canonical_metrics config.
+def build_fact_registry(canonical_metrics_config: dict) -> dict[tuple[str, str], str]:
+    """Build {(taxonomy, tag): metric_name} registry from canonical_metrics config.
 
-    Includes every tag listed under each metric's 'tags' key.
+    Includes every concept listed under each metric's 'concepts' key.
+    First mapping wins when the same (taxonomy, tag) appears in multiple metrics.
     """
-    registry: dict[str, str] = {}
+    registry: dict[tuple[str, str], str] = {}
     for metric_name, metric_def in canonical_metrics_config.get("metrics", {}).items():
-        for tag in metric_def.get("tags", []):
-            if tag not in registry:
-                registry[tag] = metric_name
+        for concept in metric_def.get("concepts", []):
+            taxonomy = str(concept.get("taxonomy", ""))
+            tag = str(concept.get("tag", ""))
+            if taxonomy and tag:
+                key = (taxonomy, tag)
+                if key not in registry:
+                    registry[key] = metric_name
     return registry
 
 
-def _registry_hash(registry: dict[str, str]) -> str:
-    canonical = json.dumps(sorted(registry.keys()), separators=(",", ":"))
+def _registry_hash(registry: dict[tuple[str, str], str]) -> str:
+    entries = sorted(f"{tax}:{tag}" for tax, tag in registry.keys())
+    canonical = json.dumps(entries, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
@@ -83,11 +89,12 @@ def _fact_id(
 class CompanyFactsFlattener:
     """Flatten one CompanyFacts payload into FlattenedXbrlFact records.
 
-    Only us-gaap tags present in the registry are emitted.  Observations with
-    missing required fields or invalid date/value types are silently dropped.
+    Only (taxonomy, tag) pairs present in the registry are emitted.
+    Observations with missing required fields or invalid date/value types
+    are silently dropped.
     """
 
-    def __init__(self, registry: dict[str, str]) -> None:
+    def __init__(self, registry: dict[tuple[str, str], str]) -> None:
         self._registry = registry
         self._reg_hash = _registry_hash(registry)
 
@@ -111,29 +118,31 @@ class CompanyFactsFlattener:
             raise ValueError(f"JSON parse failed for company {company_id}: {exc}") from exc
 
         facts = data.get("facts") or {}
-        us_gaap = facts.get("us-gaap") or {}
 
         result: list[FlattenedXbrlFact] = []
-        for tag, tag_data in us_gaap.items():
-            if tag not in self._registry:
+        for taxonomy_name, taxonomy_data in facts.items():
+            if not isinstance(taxonomy_data, dict):
                 continue
-            if not isinstance(tag_data, dict):
-                continue
-            label: str | None = tag_data.get("label")
-            description: str | None = tag_data.get("description")
-            units_map = tag_data.get("units") or {}
-            if not isinstance(units_map, dict):
-                continue
-            for unit, observations in units_map.items():
-                if not isinstance(observations, list):
+            for tag, tag_data in taxonomy_data.items():
+                if (taxonomy_name, tag) not in self._registry:
                     continue
-                for obs in observations:
-                    fact = self._process_observation(
-                        company_id, raw_version_id,
-                        "us-gaap", tag, label, description, unit, obs,
-                    )
-                    if fact is not None:
-                        result.append(fact)
+                if not isinstance(tag_data, dict):
+                    continue
+                label: str | None = tag_data.get("label")
+                description: str | None = tag_data.get("description")
+                units_map = tag_data.get("units") or {}
+                if not isinstance(units_map, dict):
+                    continue
+                for unit, observations in units_map.items():
+                    if not isinstance(observations, list):
+                        continue
+                    for obs in observations:
+                        fact = self._process_observation(
+                            company_id, raw_version_id,
+                            taxonomy_name, tag, label, description, unit, obs,
+                        )
+                        if fact is not None:
+                            result.append(fact)
 
         return result
 

@@ -17,16 +17,34 @@ from invest_ml.sec.companyfacts_flattener import (
 SAMPLE_METRICS_CONFIG = {
     "metrics": {
         "revenue": {
-            "tags": ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax"],
-            "unit": "USD",
+            "period_kind": "duration",
+            "expected_units": ["USD"],
+            "concepts": [
+                {"taxonomy": "us-gaap", "tag": "Revenues", "priority": 2},
+                {
+                    "taxonomy": "us-gaap",
+                    "tag": "RevenueFromContractWithCustomerExcludingAssessedTax",
+                    "priority": 1,
+                },
+            ],
         },
         "net_income": {
-            "tags": ["NetIncomeLoss"],
-            "unit": "USD",
+            "period_kind": "duration",
+            "expected_units": ["USD"],
+            "concepts": [
+                {"taxonomy": "us-gaap", "tag": "NetIncomeLoss", "priority": 1},
+            ],
         },
         "diluted_shares": {
-            "tags": ["WeightedAverageNumberOfDilutedSharesOutstanding"],
-            "unit": "shares",
+            "period_kind": "duration",
+            "expected_units": ["shares"],
+            "concepts": [
+                {
+                    "taxonomy": "us-gaap",
+                    "tag": "WeightedAverageNumberOfDilutedSharesOutstanding",
+                    "priority": 1,
+                },
+            ],
         },
     }
 }
@@ -50,23 +68,27 @@ def _make_payload(tag: str, observations: list, unit: str = "USD") -> bytes:
 
 def test_build_fact_registry_includes_all_tags():
     registry = build_fact_registry(SAMPLE_METRICS_CONFIG)
-    assert "Revenues" in registry
-    assert "RevenueFromContractWithCustomerExcludingAssessedTax" in registry
-    assert "NetIncomeLoss" in registry
-    assert "WeightedAverageNumberOfDilutedSharesOutstanding" in registry
-    assert registry["Revenues"] == "revenue"
-    assert registry["NetIncomeLoss"] == "net_income"
+    assert ("us-gaap", "Revenues") in registry
+    assert ("us-gaap", "RevenueFromContractWithCustomerExcludingAssessedTax") in registry
+    assert ("us-gaap", "NetIncomeLoss") in registry
+    assert ("us-gaap", "WeightedAverageNumberOfDilutedSharesOutstanding") in registry
+    assert registry[("us-gaap", "Revenues")] == "revenue"
+    assert registry[("us-gaap", "NetIncomeLoss")] == "net_income"
 
 
 def test_build_fact_registry_first_metric_wins_on_duplicate_tag():
     config = {
         "metrics": {
-            "first": {"tags": ["SharedTag"]},
-            "second": {"tags": ["SharedTag"]},
+            "first": {
+                "concepts": [{"taxonomy": "us-gaap", "tag": "SharedTag", "priority": 1}]
+            },
+            "second": {
+                "concepts": [{"taxonomy": "us-gaap", "tag": "SharedTag", "priority": 1}]
+            },
         }
     }
     registry = build_fact_registry(config)
-    assert registry["SharedTag"] == "first"
+    assert registry[("us-gaap", "SharedTag")] == "first"
 
 
 def test_registry_hash_is_deterministic():
@@ -85,7 +107,9 @@ def test_derivation_version_changes_with_registry():
     f1 = CompanyFactsFlattener.from_config(SAMPLE_METRICS_CONFIG)
     config2 = {
         "metrics": {
-            "revenue": {"tags": ["OnlyRevenues"], "unit": "USD"},
+            "revenue": {
+                "concepts": [{"taxonomy": "us-gaap", "tag": "OnlyRevenues", "priority": 1}]
+            },
         }
     }
     f2 = CompanyFactsFlattener.from_config(config2)
@@ -290,7 +314,7 @@ def test_flatten_invalid_json_raises():
         flattener.flatten(uuid4(), uuid4(), b"not valid json{")
 
 
-def test_flatten_missing_us_gaap_section():
+def test_flatten_empty_facts_section():
     flattener = CompanyFactsFlattener.from_config(SAMPLE_METRICS_CONFIG)
     payload = json.dumps({"cik": 1, "facts": {}}).encode()
     facts = flattener.flatten(uuid4(), uuid4(), payload)
