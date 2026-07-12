@@ -35,9 +35,10 @@ def test_universe_config_loads() -> None:
     assert 0 < training["minimum_canonical_metric_coverage"] <= 1.0
 
     scoring = cfg["scoring"]
-    assert "model_buckets" in scoring
-    assert "always_include" in scoring
-    assert len(scoring["always_include"]) > 0
+    assert "included_model_buckets" in scoring
+    assert len(scoring["included_model_buckets"]) > 0
+    assert "manual_include_tickers" in scoring
+    assert "manual_exclude_ciks" in scoring
 
 
 def test_canonical_metrics_loads() -> None:
@@ -113,6 +114,6 @@ def test_scoring_universe_model_buckets_reference_sic_config() -> None:
     sic = load_sic_buckets()
     universe = load_universe_config()
     declared = set(sic["model_buckets"].keys())
-    required = set(universe["scoring"]["model_buckets"])
+    required = set(universe["scoring"]["included_model_buckets"])
     missing = required - declared
     assert not missing, f"Scoring universe references undeclared buckets: {missing}"
