@@ -22,6 +22,7 @@ EXPECTED_TABLES = {
     "price_bar_sync_state",
     "feature_definitions",
     "feature_set_definitions",
+    "feature_set_members",
     "feature_snapshots",
     "target_specs",
     "labels",
