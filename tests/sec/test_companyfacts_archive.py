@@ -10,8 +10,6 @@ import json
 import zipfile
 from pathlib import Path
 
-import pytest
-
 from invest_ml.sec.companyfacts_archive import (
     CompanyFactsArchiveReader,
     CompanyFactsArchiveStats,

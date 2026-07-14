@@ -3,10 +3,7 @@
 Tests compile PostgreSQL DDL from metadata and assert all 22 tables are registered.
 """
 
-import pytest
-from sqlalchemy import create_engine, text
 from sqlalchemy.dialects import postgresql
-
 
 EXPECTED_TABLES = {
     "ingestion_runs",
@@ -36,8 +33,8 @@ EXPECTED_TABLES = {
 
 
 def _get_metadata():
-    from invest_ml.db.base import Base
     import invest_ml.db.models  # noqa: F401 — registers all models
+    from invest_ml.db.base import Base
 
     return Base.metadata
 

@@ -7,9 +7,7 @@ A feature set specifies which exact (name, version) pairs form the input vector.
 Changing any member's version requires a new feature set version.
 """
 
-from invest_ml.config.loaders import load_features_config
 from invest_ml.db.models.features import FeatureDefinition, FeatureSetDefinition
-from invest_ml.utils import deterministic_hash
 
 
 def load_feature_definitions(version: str = "v1") -> list[FeatureDefinition]:

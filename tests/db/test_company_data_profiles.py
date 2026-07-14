@@ -5,11 +5,9 @@ Uses mocked SQLAlchemy sessions — no real database required.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import MagicMock
 from uuid import uuid4
-
-import pytest
 
 from invest_ml.db.repositories.company_data_profiles import (
     CompanyDataProfileRepository,
@@ -18,7 +16,7 @@ from invest_ml.db.repositories.company_data_profiles import (
 )
 from invest_ml.sec.profiler import CompanyDataProfileResult
 
-_NOW = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+_NOW = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
 
 
 def _make_session() -> MagicMock:

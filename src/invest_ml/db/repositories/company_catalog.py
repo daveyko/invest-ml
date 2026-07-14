@@ -8,7 +8,7 @@ every operation idempotent.
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -75,7 +75,7 @@ class CompanyCatalogRepository:
             .where(IngestionRun.run_id == run_id)
             .values(
                 status="succeeded",
-                completed_at=datetime.now(tz=timezone.utc),
+                completed_at=datetime.now(tz=UTC),
                 archive_hash=archive_hash,
                 etag=etag,
                 last_modified=last_modified,
@@ -91,7 +91,7 @@ class CompanyCatalogRepository:
             .where(IngestionRun.run_id == run_id)
             .values(
                 status="failed",
-                completed_at=datetime.now(tz=timezone.utc),
+                completed_at=datetime.now(tz=UTC),
                 error=error[:2000],  # cap to avoid very long stack traces in DB
             )
         )

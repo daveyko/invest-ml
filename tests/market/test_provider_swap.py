@@ -49,14 +49,6 @@ def test_factory_produces_eod_provider_for_tiingo():
     assert isinstance(provider, TiingoEodProvider)
 
 
-def test_factory_produces_fundamentals_provider_for_tiingo():
-    from invest_ml.market.providers.factory import create_market_cap_provider
-    from invest_ml.market.providers.tiingo.fundamentals_provider import TiingoFundamentalsProvider
-
-    provider = create_market_cap_provider("tiingo", api_token="test", base_url="http://fake")
-    assert isinstance(provider, TiingoFundamentalsProvider)
-
-
 def test_factory_raises_for_unknown_provider():
     from invest_ml.market.providers.factory import create_price_provider
 

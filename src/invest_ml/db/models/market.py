@@ -59,7 +59,6 @@ class PriceBar(Base):
     split_factor: Mapped[float | None] = mapped_column(Numeric, nullable=True)
 
     source_ticker: Mapped[str | None] = mapped_column(Text, nullable=True)
-    market_cap: Mapped[float | None] = mapped_column(Numeric, nullable=True)
 
     # ingested_at = first_ingested_at; never updated after initial insert
     ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

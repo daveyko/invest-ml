@@ -7,22 +7,17 @@ control what records the service sees.
 
 from __future__ import annotations
 
-import io
 import json
-import zipfile
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
-from uuid import UUID, uuid4
+from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
-import pytest
-
-from invest_ml.company_catalog.models import CompanyCatalogResult
 from invest_ml.company_catalog.service import CompanyCatalogService
 from invest_ml.sec.archive import SubmissionArchiveRecord
 from invest_ml.sec.submissions import CatalogCompany, CatalogSecurity, ParseResult
 
-_NOW = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+_NOW = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
 _TODAY = _NOW.date()
 _RUN_ID = uuid4()
 

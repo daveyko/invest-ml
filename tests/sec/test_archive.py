@@ -11,10 +11,7 @@ import json
 import zipfile
 from pathlib import Path
 
-import pytest
-
-from invest_ml.sec.archive import SubmissionArchiveReader, SubmissionArchiveRecord
-
+from invest_ml.sec.archive import SubmissionArchiveReader
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 

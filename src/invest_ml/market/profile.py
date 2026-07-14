@@ -33,7 +33,6 @@ class CalculatedMarketProfile:
     median_daily_dollar_volume: float | None
     missing_trading_day_ratio: float | None
     latest_adjusted_close: float | None
-    current_market_cap: float | None
     quality_flags: dict[str, Any] = field(default_factory=dict)
     status: str = "success"
 
@@ -76,16 +75,10 @@ class MarketProfileCalculator:
         *,
         as_of_date: date,
         config: MarketProfileCalculationConfig,
-        current_market_cap: Decimal | None,
-        market_cap_status: str,
     ) -> CalculatedMarketProfile:
         bars = _valid_bars(history.bars)
 
         if not bars:
-            quality_flags: dict[str, Any] = {
-                "status": "no_usable_bars",
-                "market_cap_status": market_cap_status,
-            }
             return CalculatedMarketProfile(
                 first_price_date=None,
                 latest_price_date=None,
@@ -94,8 +87,7 @@ class MarketProfileCalculator:
                 median_daily_dollar_volume=None,
                 missing_trading_day_ratio=None,
                 latest_adjusted_close=None,
-                current_market_cap=float(current_market_cap) if current_market_cap else None,
-                quality_flags=quality_flags,
+                quality_flags={"status": "no_usable_bars"},
                 status="no_usable_bars",
             )
 
@@ -150,10 +142,8 @@ class MarketProfileCalculator:
             median_daily_dollar_volume=mdv,
             missing_trading_day_ratio=mtr,
             latest_adjusted_close=latest_adj_close,
-            current_market_cap=float(current_market_cap) if current_market_cap else None,
             quality_flags={
                 "status": "success",
-                "market_cap_status": market_cap_status,
                 "history_truncated": history_truncated,
                 "bars_fetched": len(history.bars),
                 "bars_valid": len(bars),

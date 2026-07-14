@@ -15,7 +15,6 @@ from invest_ml.market.models import (
     AssetMetadata,
     EquityInstrument,
     HistoricalBars,
-    MarketCapitalizationObservation,
 )
 
 
@@ -28,8 +27,6 @@ class ProviderCapabilities:
     supports_split_adjustments: bool
     supports_dividend_adjustments: bool
     supports_corporate_actions: bool
-    supports_current_market_cap: bool
-    supports_historical_market_cap: bool
 
 
 @runtime_checkable
@@ -54,14 +51,3 @@ class EquityPriceProvider(Protocol):
     ) -> HistoricalBars: ...
 
 
-@runtime_checkable
-class MarketCapitalizationProvider(Protocol):
-    @property
-    def name(self) -> str: ...
-
-    def fetch_market_cap(
-        self,
-        instrument: EquityInstrument,
-        *,
-        as_of_date: date,
-    ) -> MarketCapitalizationObservation | None: ...

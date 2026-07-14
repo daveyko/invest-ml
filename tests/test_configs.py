@@ -1,6 +1,5 @@
 """Validate YAML configuration files and cross-file consistency."""
 
-import pytest
 
 
 def test_sic_buckets_loads() -> None:

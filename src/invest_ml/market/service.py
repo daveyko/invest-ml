@@ -5,14 +5,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal
 
 from sqlalchemy.orm import sessionmaker
 
 from invest_ml.db.repositories.company_market_profiles import CompanyMarketProfileRepository
 from invest_ml.market.errors import (
     MarketDataAuthenticationError,
-    MarketDataEntitlementError,
     MarketDataInstrumentNotFoundError,
     MarketDataTemporaryError,
 )
@@ -22,7 +20,7 @@ from invest_ml.market.profile import (
     MarketProfileCalculationConfig,
     MarketProfileCalculator,
 )
-from invest_ml.market.provider import EquityPriceProvider, MarketCapitalizationProvider
+from invest_ml.market.provider import EquityPriceProvider
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +31,8 @@ class CompanyMarketProfileResult:
     profiles_succeeded: int
     profiles_not_found: int
     profiles_temporary_failure: int
-    market_cap_disabled: bool
     metadata_requests: int = 0
     price_requests: int = 0
-    market_cap_requests: int = 0
 
 
 @dataclass
@@ -58,14 +54,11 @@ class CompanyMarketProfileService:
         *,
         session_factory: sessionmaker,
         price_provider: EquityPriceProvider,
-        market_cap_provider: MarketCapitalizationProvider | None,
         calculator: MarketProfileCalculator | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._price_provider = price_provider
-        self._market_cap_provider = market_cap_provider
         self._calculator = calculator or MarketProfileCalculator()
-        self._market_cap_disabled = market_cap_provider is None
 
     def materialize(
         self,
@@ -97,7 +90,6 @@ class CompanyMarketProfileService:
             profiles_succeeded=0,
             profiles_not_found=0,
             profiles_temporary_failure=0,
-            market_cap_disabled=self._market_cap_disabled,
         )
 
         bar_start = as_of_date - timedelta(
@@ -122,16 +114,14 @@ class CompanyMarketProfileService:
                 scanned_at=scanned_at,
             )
 
-        result.market_cap_disabled = self._market_cap_disabled
         logger.info(
             "company_market_profiles: succeeded=%d not_found=%d temp_failure=%d "
-            "metadata_requests=%d price_requests=%d market_cap_requests=%d",
+            "metadata_requests=%d price_requests=%d",
             result.profiles_succeeded,
             result.profiles_not_found,
             result.profiles_temporary_failure,
             result.metadata_requests,
             result.price_requests,
-            result.market_cap_requests,
         )
         return result
 
@@ -182,40 +172,10 @@ class CompanyMarketProfileService:
         except MarketDataAuthenticationError:
             raise
 
-        # Market cap
-        current_market_cap: Decimal | None = None
-        market_cap_status = "not_available"
-
-        if not self._market_cap_disabled and self._market_cap_provider is not None:
-            try:
-                obs = self._market_cap_provider.fetch_market_cap(
-                    instrument, as_of_date=as_of_date
-                )
-                result.market_cap_requests += 1
-                if obs is not None:
-                    current_market_cap = obs.market_cap
-                    market_cap_status = "success"
-                else:
-                    market_cap_status = "not_available"
-            except MarketDataEntitlementError:
-                logger.warning(
-                    "Tiingo Fundamentals entitlement error for %s; "
-                    "disabling market-cap for this run",
-                    instrument.ticker,
-                )
-                self._market_cap_disabled = True
-                market_cap_status = "provider_not_configured"
-            except MarketDataTemporaryError:
-                market_cap_status = "not_available"
-        elif self._market_cap_disabled:
-            market_cap_status = "provider_not_configured"
-
         profile = self._calculator.calculate(
             history,
             as_of_date=as_of_date,
             config=calc_config,
-            current_market_cap=current_market_cap,
-            market_cap_status=market_cap_status,
         )
 
         if profile.status == "no_usable_bars":
@@ -251,7 +211,7 @@ class CompanyMarketProfileService:
                 latest_price_date=profile.latest_price_date if profile else None,
                 price_history_years=profile.price_history_years if profile else None,
                 median_daily_dollar_volume=profile.median_daily_dollar_volume if profile else None,
-                current_market_cap=profile.current_market_cap if profile else None,
+                current_market_cap=None,
                 missing_trading_day_ratio=profile.missing_trading_day_ratio if profile else None,
                 latest_adjusted_close=profile.latest_adjusted_close if profile else None,
                 quality_flags=quality_flags,

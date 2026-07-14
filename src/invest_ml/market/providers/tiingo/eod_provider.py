@@ -22,7 +22,6 @@ logger = logging.getLogger(__name__)
 class TiingoEodSettings:
     api_token: str
     base_url: str = "https://api.tiingo.com"
-    fundamentals_enabled: bool = False
     max_retries: int = 3
     timeout: float = 30.0
 
@@ -58,8 +57,6 @@ class TiingoEodProvider:
             supports_split_adjustments=True,
             supports_dividend_adjustments=True,
             supports_corporate_actions=False,
-            supports_current_market_cap=self._settings.fundamentals_enabled,
-            supports_historical_market_cap=self._settings.fundamentals_enabled,
         )
 
     def fetch_asset_metadata(self, instrument: EquityInstrument) -> AssetMetadata:

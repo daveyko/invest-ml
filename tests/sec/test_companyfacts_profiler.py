@@ -6,21 +6,19 @@ no database, no real YAML loading (except one integration-style smoke test).
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from uuid import uuid4
 
 import orjson
-import pytest
 
 from invest_ml.sec.profiler import (
-    CompanyDataProfileResult,
     CompanyFactsProfiler,
     ConceptSpec,
     ProfilingConfig,
     ProfilingMetricSpec,
 )
 
-_NOW = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+_NOW = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
 _COMPANY_ID = uuid4()
 _RUN_ID = uuid4()
 _VERSION = "test_v1"

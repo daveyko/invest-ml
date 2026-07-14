@@ -23,7 +23,7 @@ from dagster import AssetExecutionContext, MaterializeResult, MetadataValue, ass
 from invest_ml.defs.resources import EquityMarketDataResource, PostgresResource
 
 _SOURCE = "tiingo_eod"
-_TRAINING_UNIVERSE_NAME = "training"
+_TRAINING_UNIVERSE_NAME = "training_universe"
 _TRAINING_UNIVERSE_VERSION = "v1"
 
 

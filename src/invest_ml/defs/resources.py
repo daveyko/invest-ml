@@ -8,13 +8,13 @@ import hashlib
 import logging
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
-
 from dagster import ConfigurableResource, EnvVar
 from pydantic import Field
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
+
+logger = logging.getLogger(__name__)
 
 
 class PostgresResource(ConfigurableResource):
@@ -64,7 +64,9 @@ class SecBulkResource(ConfigurableResource):
         default=300,
         description="Total read timeout for streaming SEC archives.",
     )
-    max_retries: int = Field(default=4, description="Max retry attempts on transient errors.")
+    max_retries: int = Field(
+        default=4, description="Max retry attempts on transient errors."
+    )
     max_zip_member_bytes: int = Field(
         default=50 * 1024 * 1024,  # 50 MB per member
         description="Maximum allowed size of a single ZIP member in bytes.",
@@ -136,7 +138,9 @@ class SecBulkResource(ConfigurableResource):
         if actual != expected_sha256:
             logger.debug(
                 "Local archive %s hash mismatch: expected=%.16s actual=%.16s",
-                filename, expected_sha256, actual,
+                filename,
+                expected_sha256,
+                actual,
             )
             return None
         return candidate
@@ -170,15 +174,15 @@ class EquityMarketDataResource(ConfigurableResource):
     market_data_provider: str = Field(default="tiingo")
     tiingo_api_token: str = EnvVar("TIINGO_API_TOKEN")
     tiingo_base_url: str = Field(default="https://api.tiingo.com")
-    tiingo_fundamentals_enabled: bool = Field(default=False)
-    tiingo_market_cap_lookback_days: int = Field(default=10)
     maximum_symbols_per_run: int = Field(default=2500)
 
     # EOD price-bar ingestion settings
     tiingo_eod_reference_ticker: str = Field(default="SPY")
     tiingo_eod_max_concurrency: int = Field(default=4)
     price_bars_backfill_start_date: str = Field(default="2015-01-01")
-    price_bars_target_end_date: str = Field(default="")  # empty = use provider watermark
+    price_bars_target_end_date: str = Field(
+        default=""
+    )  # empty = use provider watermark
     price_bars_incremental_overlap_days: int = Field(default=14)
     price_bar_security_batch_size: int = Field(default=25)
     price_bar_insert_batch_size: int = Field(default=10000)
@@ -192,26 +196,14 @@ class EquityMarketDataResource(ConfigurableResource):
             provider_name=self.market_data_provider,
             api_token=self.tiingo_api_token,
             base_url=self.tiingo_base_url,
-            fundamentals_enabled=self.tiingo_fundamentals_enabled,
-            symbol_overrides=symbol_overrides,
-        )
-
-    def build_market_cap_provider(self, symbol_overrides: dict | None = None):  # type: ignore[return]
-        if not self.tiingo_fundamentals_enabled:
-            return None
-        from invest_ml.market.providers.factory import create_market_cap_provider
-
-        return create_market_cap_provider(
-            provider_name=self.market_data_provider,
-            api_token=self.tiingo_api_token,
-            base_url=self.tiingo_base_url,
-            market_cap_lookback_days=self.tiingo_market_cap_lookback_days,
             symbol_overrides=symbol_overrides,
         )
 
     def build_daily_price_provider(self, symbol_overrides: dict | None = None):  # type: ignore[return]
         from invest_ml.market.providers.tiingo.client import TiingoHttpClient
-        from invest_ml.market.providers.tiingo.daily_provider import TiingoDailyPriceProvider
+        from invest_ml.market.providers.tiingo.daily_provider import (
+            TiingoDailyPriceProvider,
+        )
 
         http_client = TiingoHttpClient(
             api_token=self.tiingo_api_token,

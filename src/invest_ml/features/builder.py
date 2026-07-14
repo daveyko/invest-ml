@@ -11,7 +11,6 @@ from datetime import date
 from uuid import UUID
 
 from invest_ml.db.models.features import FeatureSnapshot
-from invest_ml.utils import assert_no_lookahead, source_lineage_hash
 
 
 def build_snapshot(

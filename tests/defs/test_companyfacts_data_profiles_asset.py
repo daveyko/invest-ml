@@ -9,24 +9,22 @@ from __future__ import annotations
 
 import io
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
-
 from dagster import MaterializeResult, build_asset_context
 
-from invest_ml.defs.assets.discovery import companyfacts_data_profiles
 from invest_ml.db.repositories.company_data_profiles import (
     CompanyProfileTarget,
     ProfileUpsertResult,
 )
+from invest_ml.defs.assets.discovery import companyfacts_data_profiles
 from invest_ml.sec.client import DownloadResult, SecDownloadError
-from invest_ml.sec.companyfacts_archive import CompanyFactsArchiveStats
 
-_NOW = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+_NOW = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
 
 # Source-module patch paths (lazy imports inside asset body)
 _REPO_PATH = "invest_ml.db.repositories.company_data_profiles.CompanyDataProfileRepository"

@@ -1,13 +1,10 @@
 """Tests for CanonicalMetricNormalizationService using synthetic in-memory data."""
 
-from datetime import UTC, date, datetime
+from datetime import date
 from decimal import Decimal
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
-import pytest
-
-from invest_ml.canonical.models import CandidateFact, ResolvedCanonicalMetric
 from invest_ml.canonical.registry import CanonicalMetricRegistry
 from invest_ml.canonical.service import CanonicalMetricNormalizationService
 
