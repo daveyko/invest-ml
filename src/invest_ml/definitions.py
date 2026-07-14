@@ -19,7 +19,7 @@ from invest_ml.defs.assets.financials import (
     canonical_metrics,
     xbrl_facts,
 )
-from invest_ml.defs.assets.market import price_bars
+from invest_ml.defs.assets.market import selected_price_bars
 from invest_ml.defs.assets.modeling import (
     current_predictions,
     matured_labels,
@@ -46,7 +46,7 @@ _all_assets = [
     # Financial warehouse group
     xbrl_facts,
     canonical_metrics,
-    price_bars,
+    selected_price_bars,
     # ML group
     feature_registry,
     feature_snapshots,

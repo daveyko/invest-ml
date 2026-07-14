@@ -174,6 +174,17 @@ class EquityMarketDataResource(ConfigurableResource):
     tiingo_market_cap_lookback_days: int = Field(default=10)
     maximum_symbols_per_run: int = Field(default=2500)
 
+    # EOD price-bar ingestion settings
+    tiingo_eod_reference_ticker: str = Field(default="SPY")
+    tiingo_eod_max_concurrency: int = Field(default=4)
+    price_bars_backfill_start_date: str = Field(default="2015-01-01")
+    price_bars_target_end_date: str = Field(default="")  # empty = use provider watermark
+    price_bars_incremental_overlap_days: int = Field(default=14)
+    price_bar_security_batch_size: int = Field(default=25)
+    price_bar_insert_batch_size: int = Field(default=10000)
+    price_bar_max_failed_securities: int = Field(default=25)
+    price_bar_max_failed_security_ratio: float = Field(default=0.02)
+
     def build_price_provider(self, symbol_overrides: dict | None = None):  # type: ignore[return]
         from invest_ml.market.providers.factory import create_price_provider
 
@@ -195,6 +206,19 @@ class EquityMarketDataResource(ConfigurableResource):
             api_token=self.tiingo_api_token,
             base_url=self.tiingo_base_url,
             market_cap_lookback_days=self.tiingo_market_cap_lookback_days,
+            symbol_overrides=symbol_overrides,
+        )
+
+    def build_daily_price_provider(self, symbol_overrides: dict | None = None):  # type: ignore[return]
+        from invest_ml.market.providers.tiingo.client import TiingoHttpClient
+        from invest_ml.market.providers.tiingo.daily_provider import TiingoDailyPriceProvider
+
+        http_client = TiingoHttpClient(
+            api_token=self.tiingo_api_token,
+            base_url=self.tiingo_base_url,
+        )
+        return TiingoDailyPriceProvider(
+            http_client=http_client,
             symbol_overrides=symbol_overrides,
         )
 

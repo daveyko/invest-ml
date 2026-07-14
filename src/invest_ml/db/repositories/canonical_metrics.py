@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import select, tuple_
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -31,38 +31,26 @@ class CanonicalMetricsRepository:
     ) -> CanonicalMetricInsertResult:
         """Insert resolved canonical metrics with idempotency checking.
 
-        Before inserting, queries for any existing rows matching the unique key.
-        Rows that already exist with identical values are counted as already_present.
-        Rows that exist with different values raise ValueError immediately.
+        Queries existing rows by company_id + normalization_version (simple IN)
+        rather than a 6-column tuple IN, which avoids PostgreSQL's stack depth
+        and parameter count limits. The service already batches by company so
+        company_id sets here are naturally small (~100 IDs).
         """
         if not metrics:
             return CanonicalMetricInsertResult(
                 rows_seen=0, rows_inserted=0, rows_already_present=0, conflicting_rows=0
             )
 
-        keys = [
-            (
-                m.company_id,
-                m.metric_name,
-                m.period_type,
-                m.period_end,
-                m.available_at,
-                m.normalization_version,
-            )
-            for m in metrics
-        ]
+        # Fetch existing rows for the same companies + normalization version.
+        # company_id IN (<100 UUIDs>) is cheap and avoids huge tuple IN clauses.
+        company_ids = list({m.company_id for m in metrics})
+        norm_versions = list({m.normalization_version for m in metrics})
 
         existing_rows = (
             self._s.execute(
                 select(CanonicalMetric).where(
-                    tuple_(
-                        CanonicalMetric.company_id,
-                        CanonicalMetric.metric_name,
-                        CanonicalMetric.period_type,
-                        CanonicalMetric.period_end,
-                        CanonicalMetric.available_at,
-                        CanonicalMetric.normalization_version,
-                    ).in_(keys)
+                    CanonicalMetric.company_id.in_(company_ids),
+                    CanonicalMetric.normalization_version.in_(norm_versions),
                 )
             )
             .scalars()

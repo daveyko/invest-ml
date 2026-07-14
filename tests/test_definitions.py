@@ -25,7 +25,7 @@ def test_expected_assets_present() -> None:
         "scoring_universe",
         "xbrl_facts",
         "canonical_metrics",
-        "price_bars",
+        "selected_price_bars",
         "feature_registry",
         "feature_snapshots",
         "matured_labels",
