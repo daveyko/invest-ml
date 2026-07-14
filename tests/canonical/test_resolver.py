@@ -6,7 +6,12 @@ from uuid import uuid4
 
 import pytest
 
-from invest_ml.canonical.models import CandidateFact, ConceptConfig, MetricConfig, PeriodClassification
+from invest_ml.canonical.models import (
+    CandidateFact,
+    ConceptConfig,
+    MetricConfig,
+    PeriodClassification,
+)
 from invest_ml.canonical.resolver import CandidateResolver
 
 

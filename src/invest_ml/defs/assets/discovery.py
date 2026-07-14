@@ -690,12 +690,10 @@ def company_market_profiles(
     )
 
     price_provider = equity_market_data.build_price_provider(symbol_overrides)
-    market_cap_provider = equity_market_data.build_market_cap_provider(symbol_overrides)
 
     service = CompanyMarketProfileService(
         session_factory=session_factory,
         price_provider=price_provider,
-        market_cap_provider=market_cap_provider,
     )
 
     result = service.materialize(as_of_date=as_of_date, config=run_config)
@@ -717,10 +715,8 @@ def company_market_profiles(
             "profiles_succeeded": MetadataValue.int(result.profiles_succeeded),
             "profiles_not_found": MetadataValue.int(result.profiles_not_found),
             "profiles_temporary_failure": MetadataValue.int(result.profiles_temporary_failure),
-            "market_cap_disabled": MetadataValue.bool(result.market_cap_disabled),
             "metadata_requests": MetadataValue.int(result.metadata_requests),
             "price_requests": MetadataValue.int(result.price_requests),
-            "market_cap_requests": MetadataValue.int(result.market_cap_requests),
             "as_of_date": MetadataValue.text(as_of_date.isoformat()),
             "duration_seconds": MetadataValue.float(round(duration, 1)),
         }

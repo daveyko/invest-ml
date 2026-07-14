@@ -1,4 +1,4 @@
-"""Unit tests for TiingoEodProvider and TiingoFundamentalsProvider.
+"""Unit tests for TiingoEodProvider.
 
 All tests use mocked TiingoHttpClient — no live Tiingo requests.
 """
@@ -10,10 +10,6 @@ from uuid import uuid4
 
 from invest_ml.market.models import EquityInstrument
 from invest_ml.market.providers.tiingo.eod_provider import TiingoEodProvider, TiingoEodSettings
-from invest_ml.market.providers.tiingo.fundamentals_provider import (
-    TiingoFundamentalsProvider,
-    TiingoFundamentalsSettings,
-)
 
 
 def _instrument(ticker: str = "ACME") -> EquityInstrument:
@@ -25,11 +21,8 @@ def _instrument(ticker: str = "ACME") -> EquityInstrument:
     )
 
 
-def _eod_settings(fundamentals: bool = False) -> TiingoEodSettings:
-    return TiingoEodSettings(
-        api_token="test-token",
-        fundamentals_enabled=fundamentals,
-    )
+def _eod_settings() -> TiingoEodSettings:
+    return TiingoEodSettings(api_token="test-token")
 
 
 def _mock_http_client() -> MagicMock:
@@ -86,41 +79,6 @@ def test_fetch_daily_bars_returns_empty_list():
         _instrument(), start_date=date(2023, 7, 10), end_date=date(2026, 7, 10)
     )
     assert history.bars == ()
-
-
-def test_capabilities_without_fundamentals():
-    provider = TiingoEodProvider(_eod_settings(fundamentals=False))
-    assert not provider.capabilities.supports_current_market_cap
-    assert not provider.capabilities.supports_historical_market_cap
-
-
-def test_capabilities_with_fundamentals():
-    provider = TiingoEodProvider(_eod_settings(fundamentals=True))
-    assert provider.capabilities.supports_current_market_cap
-    assert provider.capabilities.supports_historical_market_cap
-
-
-def test_fundamentals_provider_returns_observation():
-    client = _mock_http_client()
-    client.get.return_value = [
-        {"date": "2026-07-08T00:00:00+00:00", "marketCap": 10_000_000_000.0},
-        {"date": "2026-07-09T00:00:00+00:00", "marketCap": 10_100_000_000.0},
-    ]
-    settings = TiingoFundamentalsSettings(api_token="test-token")
-    provider = TiingoFundamentalsProvider(settings, http_client=client)
-    obs = provider.fetch_market_cap(_instrument(), as_of_date=date(2026, 7, 10))
-    assert obs is not None
-    assert obs.observation_date == date(2026, 7, 9)
-    assert obs.market_cap == Decimal("10100000000.0")
-
-
-def test_fundamentals_provider_returns_none_for_empty():
-    client = _mock_http_client()
-    client.get.return_value = []
-    settings = TiingoFundamentalsSettings(api_token="test-token")
-    provider = TiingoFundamentalsProvider(settings, http_client=client)
-    obs = provider.fetch_market_cap(_instrument(), as_of_date=date(2026, 7, 10))
-    assert obs is None
 
 
 def test_symbol_override_applied():

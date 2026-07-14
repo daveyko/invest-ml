@@ -1,6 +1,5 @@
 """Smoke tests for the canonical_metrics Dagster asset definition."""
 
-import pytest
 
 
 def test_canonical_metrics_asset_exists():
@@ -16,6 +15,7 @@ def test_canonical_metrics_group_name():
 
 def test_canonical_metrics_deps_include_xbrl_facts():
     from dagster import AssetKey
+
     from invest_ml.defs.assets.financials import canonical_metrics
     raw_deps = canonical_metrics.asset_deps[canonical_metrics.key]
     dep_keys = {d if isinstance(d, AssetKey) else d.asset_key for d in raw_deps}
@@ -31,6 +31,7 @@ def test_canonical_metrics_not_in_definitions_as_stub():
 
 def test_definitions_includes_canonical_metrics():
     from dagster import AssetKey
+
     from invest_ml.definitions import defs
     asset_graph = defs.resolve_asset_graph()
     asset_keys = asset_graph.get_all_asset_keys()

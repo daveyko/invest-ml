@@ -1,0 +1,863 @@
+# Feature registry: compounder_v1
+#
+# Versioned, declarative feature definitions for the compounder model.
+# All features are point-in-time safe: no data with available_at > as_of_date
+# is used in any feature computation.
+#
+# This file defines WHAT features are and HOW they are calculated.
+# It does NOT calculate feature values — that is feature_snapshots' job.
+
+registry_version: feature_registry_v1
+
+# ── Feature sets ──────────────────────────────────────────────────────────────
+
+feature_sets:
+  compounder_v1:
+    name: compounder
+    version: compounder_v1
+    entity_grain: company_security
+    snapshot_frequency: monthly
+    description: >
+      Point-in-time fundamental quality, growth, balance-sheet,
+      momentum, volatility, and liquidity features for the compounder model.
+      Fundamental inputs use annual canonical metrics filtered by available_at.
+      Price inputs use adjusted_close on or before the snapshot date.
+    features:
+      - model_bucket
+      - revenue_growth_1y
+      - revenue_cagr_3y
+      - gross_margin
+      - operating_margin
+      - net_margin
+      - operating_cash_flow_margin
+      - free_cash_flow_margin
+      - research_and_development_intensity
+      - stock_based_compensation_intensity
+      - cash_to_assets
+      - total_debt_to_assets
+      - net_cash_to_assets
+      - liabilities_to_assets
+      - diluted_share_growth_1y
+      - positive_revenue_growth_years_3
+      - positive_free_cash_flow_years_3
+      - financial_data_age_days
+      - adjusted_return_21d
+      - adjusted_return_63d
+      - adjusted_return_126d
+      - adjusted_return_252d
+      - momentum_252d_excluding_21d
+      - realized_volatility_63d
+      - realized_volatility_252d
+      - downside_volatility_126d
+      - max_drawdown_252d
+      - distance_from_252d_high
+      - price_to_sma_50d
+      - price_to_sma_200d
+      - log_median_dollar_volume_60d
+      - dollar_volume_trend_20d_120d
+
+# ── Feature definitions ───────────────────────────────────────────────────────
+
+features:
+
+  # ── Categorical ─────────────────────────────────────────────────────────────
+
+  model_bucket:
+    version: v1
+    category: categorical
+    entity_grain: company_security
+    value_type: categorical
+    description: >
+      Industry model bucket derived from SIC classification.
+      Examples: software_and_data, semiconductors, networking_and_hardware,
+      fintech_and_capital_markets, automation_and_instruments, power_and_grid,
+      internet_and_consumer_technology.
+    definition:
+      operation: categorical_lookup
+      source: company_classification
+      classification_type: model_bucket
+    point_in_time_policy:
+      selection: effective_on_or_before_as_of_date
+    missing_value_policy:
+      behavior: "null"
+
+  # ── Fundamental growth ───────────────────────────────────────────────────────
+
+  revenue_growth_1y:
+    version: v1
+    category: fundamental_growth
+    entity_grain: company_security
+    value_type: float
+    description: >
+      Year-over-year revenue growth: current annual revenue / previous annual revenue - 1.
+      Requires consecutive annual periods with a positive prior value.
+    definition:
+      operation: pct_change
+      input:
+        source: canonical_metric
+        metric_name: revenue
+        period_type: annual
+      window: 1
+      require_positive_prior: true
+      minimum_periods: 2
+    point_in_time_policy:
+      availability_field: available_at
+      selection: latest_available_on_or_before_as_of_date
+    missing_value_policy:
+      behavior: "null"
+
+  revenue_cagr_3y:
+    version: v1
+    category: fundamental_growth
+    entity_grain: company_security
+    value_type: float
+    description: >
+      3-year compound annual growth rate of revenue:
+      (current revenue / revenue 3 annual periods earlier)^(1/3) - 1.
+      Requires at least 4 annual observations with positive current and prior values.
+    definition:
+      operation: cagr
+      input:
+        source: canonical_metric
+        metric_name: revenue
+        period_type: annual
+      periods: 3
+      minimum_periods: 4
+      require_positive_values: true
+    point_in_time_policy:
+      availability_field: available_at
+      selection: latest_available_on_or_before_as_of_date
+    missing_value_policy:
+      behavior: "null"
+
+  diluted_share_growth_1y:
+    version: v1
+    category: fundamental_growth
+    entity_grain: company_security
+    value_type: float
+    description: >
+      Year-over-year diluted share count growth:
+      current diluted_weighted_average_shares / previous - 1.
+      Positive values indicate dilution. Requires a positive prior period value.
+    definition:
+      operation: pct_change
+      input:
+        source: canonical_metric
+        metric_name: diluted_weighted_average_shares
+        period_type: annual
+      window: 1
+      require_positive_prior: true
+      minimum_periods: 2
+    point_in_time_policy:
+      availability_field: available_at
+      selection: latest_available_on_or_before_as_of_date
+    missing_value_policy:
+      behavior: "null"
+
+  positive_revenue_growth_years_3:
+    version: v1
+    category: fundamental_growth
+    entity_grain: company_security
+    value_type: float
+    description: >
+      Count of years with positive revenue growth among the 3 most recent annual periods
+      available as of the snapshot date. Range: 0-3. Returns null if fewer than 3
+      growth observations are available.
+    definition:
+      operation: positive_count
+      lookback_periods: 3
+      require_all_periods: true
+      inner:
+        operation: pct_change
+        input:
+          source: canonical_metric
+          metric_name: revenue
+          period_type: annual
+        window: 1
+    point_in_time_policy:
+      availability_field: available_at
+      selection: latest_available_on_or_before_as_of_date
+    missing_value_policy:
+      behavior: "null"
+
+  positive_free_cash_flow_years_3:
+    version: v1
+    category: fundamental_growth
+    entity_grain: company_security
+    value_type: float
+    description: >
+      Count of years with positive free cash flow among the 3 most recent annual periods.
+      Free cash flow = operating_cash_flow - capital_expenditures.
+      Range: 0-3. Returns null if fewer than 3 observations are available.
+    definition:
+      operation: positive_count
+      lookback_periods: 3
+      require_all_periods: true
+      inner:
+        operation: difference
+        minuend:
+          source: canonical_metric
+          metric_name: operating_cash_flow
+          period_type: annual
+        subtrahend:
+          source: canonical_metric
+          metric_name: capital_expenditures
+          period_type: annual
+        alignment: same_period_end
+    point_in_time_policy:
+      availability_field: available_at
+      selection: latest_available_on_or_before_as_of_date
+    missing_value_policy:
+      behavior: "null"
+
+  # ── Fundamental quality (margins) ────────────────────────────────────────────
+
+  gross_margin:
+    version: v1
+    category: fundamental_quality
+    entity_grain: company_security
+    value_type: float
+    description: Gross profit divided by revenue for the same annual period.
+    definition:
+      operation: ratio
+      numerator:
+        source: canonical_metric
+        metric_name: gross_profit
+        period_type: annual
+      denominator:
+        source: canonical_metric
+        metric_name: revenue
+        period_type: annual
+      alignment: same_period_end
+    point_in_time_policy:
+      availability_field: available_at
+      selection: latest_available_on_or_before_as_of_date
+    missing_value_policy:
+      behavior: "null"
+
+  operating_margin:
+    version: v1
+    category: fundamental_quality
+    entity_grain: company_security
+    value_type: float
+    description: Operating income divided by revenue for the same annual period.
+    definition:
+      operation: ratio
+      numerator:
+        source: canonical_metric
+        metric_name: operating_income
+        period_type: annual
+      denominator:
+        source: canonical_metric
+        metric_name: revenue
+        period_type: annual
+      alignment: same_period_end
+    point_in_time_policy:
+      availability_field: available_at
+      selection: latest_available_on_or_before_as_of_date
+    missing_value_policy:
+      behavior: "null"
+
+  net_margin:
+    version: v1
+    category: fundamental_quality
+    entity_grain: company_security
+    value_type: float
+    description: Net income divided by revenue for the same annual period.
+    definition:
+      operation: ratio
+      numerator:
+        source: canonical_metric
+        metric_name: net_income
+        period_type: annual
+      denominator:
+        source: canonical_metric
+        metric_name: revenue
+        period_type: annual
+      alignment: same_period_end
+    point_in_time_policy:
+      availability_field: available_at
+      selection: latest_available_on_or_before_as_of_date
+    missing_value_policy:
+      behavior: "null"
+
+  operating_cash_flow_margin:
+    version: v1
+    category: fundamental_quality
+    entity_grain: company_security
+    value_type: float
+    description: Operating cash flow divided by revenue for the same annual period.
+    definition:
+      operation: ratio
+      numerator:
+        source: canonical_metric
+        metric_name: operating_cash_flow
+        period_type: annual
+      denominator:
+        source: canonical_metric
+        metric_name: revenue
+        period_type: annual
+      alignment: same_period_end
+    point_in_time_policy:
+      availability_field: available_at
+      selection: latest_available_on_or_before_as_of_date
+    missing_value_policy:
+      behavior: "null"
+
+  free_cash_flow_margin:
+    version: v1
+    category: fundamental_quality
+    entity_grain: company_security
+    value_type: float
+    description: >
+      Free cash flow margin: (operating_cash_flow - capital_expenditures) / revenue.
+      All three inputs must share the same annual period end.
+      capital_expenditures uses the canonical positive-cash-spent convention (>= 0).
+    definition:
+      operation: ratio
+      numerator:
+        operation: difference
+        minuend:
+          source: canonical_metric
+          metric_name: operating_cash_flow
+          period_type: annual
+        subtrahend:
+          source: canonical_metric
+          metric_name: capital_expenditures
+          period_type: annual
+        alignment: same_period_end
+      denominator:
+        source: canonical_metric
+        metric_name: revenue
+        period_type: annual
+      alignment: same_period_end
+    point_in_time_policy:
+      availability_field: available_at
+      selection: latest_available_on_or_before_as_of_date
+    missing_value_policy:
+      behavior: "null"
+
+  research_and_development_intensity:
+    version: v1
+    category: fundamental_quality
+    entity_grain: company_security
+    value_type: float
+    description: R&D expense divided by revenue for the same annual period.
+    definition:
+      operation: ratio
+      numerator:
+        source: canonical_metric
+        metric_name: research_and_development_expense
+        period_type: annual
+      denominator:
+        source: canonical_metric
+        metric_name: revenue
+        period_type: annual
+      alignment: same_period_end
+    point_in_time_policy:
+      availability_field: available_at
+      selection: latest_available_on_or_before_as_of_date
+    missing_value_policy:
+      behavior: "null"
+
+  stock_based_compensation_intensity:
+    version: v1
+    category: fundamental_quality
+    entity_grain: company_security
+    value_type: float
+    description: Stock-based compensation divided by revenue for the same annual period.
+    definition:
+      operation: ratio
+      numerator:
+        source: canonical_metric
+        metric_name: stock_based_compensation
+        period_type: annual
+      denominator:
+        source: canonical_metric
+        metric_name: revenue
+        period_type: annual
+      alignment: same_period_end
+    point_in_time_policy:
+      availability_field: available_at
+      selection: latest_available_on_or_before_as_of_date
+    missing_value_policy:
+      behavior: "null"
+
+  financial_data_age_days:
+    version: v1
+    category: fundamental_quality
+    entity_grain: company_security
+    value_type: float
+    description: >
+      Calendar days between as_of_date and the available_at of the latest annual
+      revenue observation selected for the snapshot. Measures reporting-data staleness,
+      not fiscal-period age.
+    definition:
+      operation: age_days
+      input:
+        source: canonical_metric
+        metric_name: revenue
+        period_type: annual
+      date_field: available_at
+      reference_date: as_of_date
+    point_in_time_policy:
+      availability_field: available_at
+      selection: latest_available_on_or_before_as_of_date
+    missing_value_policy:
+      behavior: "null"
+
+  # ── Fundamental balance sheet ─────────────────────────────────────────────────
+
+  cash_to_assets:
+    version: v1
+    category: fundamental_balance_sheet
+    entity_grain: company_security
+    value_type: float
+    description: Cash and cash equivalents divided by total assets. Same instant period end.
+    definition:
+      operation: ratio
+      numerator:
+        source: canonical_metric
+        metric_name: cash_and_cash_equivalents
+        period_type: instant
+      denominator:
+        source: canonical_metric
+        metric_name: total_assets
+        period_type: instant
+      alignment: same_period_end
+    point_in_time_policy:
+      availability_field: available_at
+      selection: latest_available_on_or_before_as_of_date
+    missing_value_policy:
+      behavior: "null"
+
+  total_debt_to_assets:
+    version: v1
+    category: fundamental_balance_sheet
+    entity_grain: company_security
+    value_type: float
+    description: >
+      Total debt (debt_current + long_term_debt) divided by total_assets.
+      At least one debt component must be non-null; null when both are missing.
+      Both debt components are coalesced to zero when null.
+    definition:
+      operation: ratio
+      numerator:
+        operation: sum
+        components:
+          - source: canonical_metric
+            metric_name: debt_current
+            period_type: instant
+            coalesce_zero: true
+          - source: canonical_metric
+            metric_name: long_term_debt
+            period_type: instant
+            coalesce_zero: true
+        require_at_least_one_non_null: true
+        alignment: same_period_end
+      denominator:
+        source: canonical_metric
+        metric_name: total_assets
+        period_type: instant
+      alignment: same_period_end
+    point_in_time_policy:
+      availability_field: available_at
+      selection: latest_available_on_or_before_as_of_date
+    missing_value_policy:
+      behavior: "null"
+
+  net_cash_to_assets:
+    version: v1
+    category: fundamental_balance_sheet
+    entity_grain: company_security
+    value_type: float
+    description: >
+      Net cash (cash_and_cash_equivalents - total_debt) divided by total_assets.
+      total_debt = coalesce(debt_current, 0) + coalesce(long_term_debt, 0).
+      Same instant period end for all inputs.
+    definition:
+      operation: ratio
+      numerator:
+        operation: difference
+        minuend:
+          source: canonical_metric
+          metric_name: cash_and_cash_equivalents
+          period_type: instant
+        subtrahend:
+          operation: sum
+          components:
+            - source: canonical_metric
+              metric_name: debt_current
+              period_type: instant
+              coalesce_zero: true
+            - source: canonical_metric
+              metric_name: long_term_debt
+              period_type: instant
+              coalesce_zero: true
+          require_at_least_one_non_null: true
+          alignment: same_period_end
+        alignment: same_period_end
+      denominator:
+        source: canonical_metric
+        metric_name: total_assets
+        period_type: instant
+      alignment: same_period_end
+    point_in_time_policy:
+      availability_field: available_at
+      selection: latest_available_on_or_before_as_of_date
+    missing_value_policy:
+      behavior: "null"
+
+  liabilities_to_assets:
+    version: v1
+    category: fundamental_balance_sheet
+    entity_grain: company_security
+    value_type: float
+    description: Total liabilities divided by total assets. Same instant period end.
+    definition:
+      operation: ratio
+      numerator:
+        source: canonical_metric
+        metric_name: total_liabilities
+        period_type: instant
+      denominator:
+        source: canonical_metric
+        metric_name: total_assets
+        period_type: instant
+      alignment: same_period_end
+    point_in_time_policy:
+      availability_field: available_at
+      selection: latest_available_on_or_before_as_of_date
+    missing_value_policy:
+      behavior: "null"
+
+  # ── Price: returns ─────────────────────────────────────────────────────────────
+
+  adjusted_return_21d:
+    version: v1
+    category: momentum
+    entity_grain: company_security
+    value_type: float
+    description: >
+      21-trading-observation return: latest adjusted_close / adjusted_close 21
+      observations earlier - 1. Requires at least 22 valid observations.
+    definition:
+      operation: adjusted_return
+      input:
+        source: price_bar
+        field: adjusted_close
+      lookback_observations: 21
+      minimum_observations: 22
+    point_in_time_policy:
+      availability_field: trading_date
+      selection: trading_date_on_or_before_as_of_date
+      lookback_unit: trading_observations
+    missing_value_policy:
+      behavior: "null"
+
+  adjusted_return_63d:
+    version: v1
+    category: momentum
+    entity_grain: company_security
+    value_type: float
+    description: >
+      63-trading-observation return. Approximately 3-month return.
+      Requires at least 64 valid observations.
+    definition:
+      operation: adjusted_return
+      input:
+        source: price_bar
+        field: adjusted_close
+      lookback_observations: 63
+      minimum_observations: 64
+    point_in_time_policy:
+      availability_field: trading_date
+      selection: trading_date_on_or_before_as_of_date
+      lookback_unit: trading_observations
+    missing_value_policy:
+      behavior: "null"
+
+  adjusted_return_126d:
+    version: v1
+    category: momentum
+    entity_grain: company_security
+    value_type: float
+    description: >
+      126-trading-observation return. Approximately 6-month return.
+      Requires at least 127 valid observations.
+    definition:
+      operation: adjusted_return
+      input:
+        source: price_bar
+        field: adjusted_close
+      lookback_observations: 126
+      minimum_observations: 127
+    point_in_time_policy:
+      availability_field: trading_date
+      selection: trading_date_on_or_before_as_of_date
+      lookback_unit: trading_observations
+    missing_value_policy:
+      behavior: "null"
+
+  adjusted_return_252d:
+    version: v1
+    category: momentum
+    entity_grain: company_security
+    value_type: float
+    description: >
+      252-trading-observation return. Approximately 12-month return.
+      Requires at least 253 valid observations.
+    definition:
+      operation: adjusted_return
+      input:
+        source: price_bar
+        field: adjusted_close
+      lookback_observations: 252
+      minimum_observations: 253
+    point_in_time_policy:
+      availability_field: trading_date
+      selection: trading_date_on_or_before_as_of_date
+      lookback_unit: trading_observations
+    missing_value_policy:
+      behavior: "null"
+
+  momentum_252d_excluding_21d:
+    version: v1
+    category: momentum
+    entity_grain: company_security
+    value_type: float
+    description: >
+      12-month momentum excluding the most recent month:
+      adjusted_close at t-21 / adjusted_close at t-252 - 1.
+      Requires at least 253 valid observations.
+    definition:
+      operation: momentum_excluding_recent
+      input:
+        source: price_bar
+        field: adjusted_close
+      total_lookback: 252
+      recent_exclusion: 21
+      minimum_observations: 253
+    point_in_time_policy:
+      availability_field: trading_date
+      selection: trading_date_on_or_before_as_of_date
+      lookback_unit: trading_observations
+    missing_value_policy:
+      behavior: "null"
+
+  # ── Price: volatility and risk ─────────────────────────────────────────────────
+
+  realized_volatility_63d:
+    version: v1
+    category: volatility_and_risk
+    entity_grain: company_security
+    value_type: float
+    description: >
+      Annualized realized volatility over the most recent 63 daily log returns:
+      std(log(P_t / P_{t-1})) * sqrt(252). Requires at least 64 valid price observations.
+    definition:
+      operation: realized_volatility
+      input:
+        source: price_bar
+        field: adjusted_close
+      lookback_returns: 63
+      annualization_factor: 252
+      minimum_observations: 64
+    point_in_time_policy:
+      availability_field: trading_date
+      selection: trading_date_on_or_before_as_of_date
+      lookback_unit: trading_observations
+    missing_value_policy:
+      behavior: "null"
+
+  realized_volatility_252d:
+    version: v1
+    category: volatility_and_risk
+    entity_grain: company_security
+    value_type: float
+    description: >
+      Annualized realized volatility over the most recent 252 daily log returns.
+      Requires at least 253 valid price observations.
+    definition:
+      operation: realized_volatility
+      input:
+        source: price_bar
+        field: adjusted_close
+      lookback_returns: 252
+      annualization_factor: 252
+      minimum_observations: 253
+    point_in_time_policy:
+      availability_field: trading_date
+      selection: trading_date_on_or_before_as_of_date
+      lookback_unit: trading_observations
+    missing_value_policy:
+      behavior: "null"
+
+  downside_volatility_126d:
+    version: v1
+    category: volatility_and_risk
+    entity_grain: company_security
+    value_type: float
+    description: >
+      Annualized downside volatility: std(negative daily log returns) * sqrt(252)
+      over the most recent 126 return observations.
+      Returns null when fewer than 10 negative-return observations exist.
+    definition:
+      operation: downside_volatility
+      input:
+        source: price_bar
+        field: adjusted_close
+      lookback_returns: 126
+      annualization_factor: 252
+      minimum_observations: 127
+      minimum_negative_observations: 10
+    point_in_time_policy:
+      availability_field: trading_date
+      selection: trading_date_on_or_before_as_of_date
+      lookback_unit: trading_observations
+    missing_value_policy:
+      behavior: "null"
+
+  max_drawdown_252d:
+    version: v1
+    category: volatility_and_risk
+    entity_grain: company_security
+    value_type: float
+    description: >
+      Maximum peak-to-trough drawdown over the most recent 252 adjusted_close
+      observations. Returns a non-positive value between 0 and -1.
+      Requires at least 2 valid observations.
+    definition:
+      operation: max_drawdown
+      input:
+        source: price_bar
+        field: adjusted_close
+      lookback_observations: 252
+      minimum_observations: 2
+    point_in_time_policy:
+      availability_field: trading_date
+      selection: trading_date_on_or_before_as_of_date
+      lookback_unit: trading_observations
+    missing_value_policy:
+      behavior: "null"
+
+  # ── Price: relative position ────────────────────────────────────────────────────
+
+  distance_from_252d_high:
+    version: v1
+    category: momentum
+    entity_grain: company_security
+    value_type: float
+    description: >
+      Latest adjusted_close / max adjusted_close over most recent 252 observations - 1.
+      Returns 0 or negative. Requires at least 2 valid observations.
+    definition:
+      operation: distance_from_high
+      input:
+        source: price_bar
+        field: adjusted_close
+      lookback_observations: 252
+      minimum_observations: 2
+    point_in_time_policy:
+      availability_field: trading_date
+      selection: trading_date_on_or_before_as_of_date
+      lookback_unit: trading_observations
+    missing_value_policy:
+      behavior: "null"
+
+  price_to_sma_50d:
+    version: v1
+    category: momentum
+    entity_grain: company_security
+    value_type: float
+    description: >
+      Latest adjusted_close / mean adjusted_close over most recent 50 observations - 1.
+      Measures price distance from its 50-day moving average.
+      Requires at least 50 valid observations.
+    definition:
+      operation: moving_average_ratio
+      input:
+        source: price_bar
+        field: adjusted_close
+      window: 50
+      minimum_observations: 50
+    point_in_time_policy:
+      availability_field: trading_date
+      selection: trading_date_on_or_before_as_of_date
+      lookback_unit: trading_observations
+    missing_value_policy:
+      behavior: "null"
+
+  price_to_sma_200d:
+    version: v1
+    category: momentum
+    entity_grain: company_security
+    value_type: float
+    description: >
+      Latest adjusted_close / mean adjusted_close over most recent 200 observations - 1.
+      Measures price distance from its 200-day moving average.
+      Requires at least 200 valid observations.
+    definition:
+      operation: moving_average_ratio
+      input:
+        source: price_bar
+        field: adjusted_close
+      window: 200
+      minimum_observations: 200
+    point_in_time_policy:
+      availability_field: trading_date
+      selection: trading_date_on_or_before_as_of_date
+      lookback_unit: trading_observations
+    missing_value_policy:
+      behavior: "null"
+
+  # ── Price: liquidity ────────────────────────────────────────────────────────────
+
+  log_median_dollar_volume_60d:
+    version: v1
+    category: liquidity
+    entity_grain: company_security
+    value_type: float
+    description: >
+      log1p(median daily dollar volume over the most recent 60 trading observations).
+      Dollar volume = raw close * raw volume. Uses unadjusted prices for liquidity.
+      Requires at least 60 valid observations.
+    definition:
+      operation: median_dollar_volume
+      close_field: close
+      volume_field: volume
+      lookback_observations: 60
+      minimum_observations: 60
+      transform: log1p
+    point_in_time_policy:
+      availability_field: trading_date
+      selection: trading_date_on_or_before_as_of_date
+      lookback_unit: trading_observations
+    missing_value_policy:
+      behavior: "null"
+
+  dollar_volume_trend_20d_120d:
+    version: v1
+    category: liquidity
+    entity_grain: company_security
+    value_type: float
+    description: >
+      Trend in median dollar volume: (20-day median / 120-day median) - 1.
+      Positive values indicate accelerating liquidity.
+      Requires a positive 120-day median and at least 120 valid observations.
+    definition:
+      operation: window_ratio
+      inner:
+        operation: median_dollar_volume
+        close_field: close
+        volume_field: volume
+      short_window: 20
+      long_window: 120
+      minimum_long_observations: 120
+      require_positive_denominator: true
+    point_in_time_policy:
+      availability_field: trading_date
+      selection: trading_date_on_or_before_as_of_date
+      lookback_unit: trading_observations
+    missing_value_policy:
+      behavior: "null"

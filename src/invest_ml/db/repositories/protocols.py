@@ -13,13 +13,12 @@ from typing import Protocol
 from uuid import UUID
 
 from invest_ml.db.models.company import Company, Security
-from invest_ml.db.models.classification import CompanyClassification
-from invest_ml.db.models.profiling import CompanyDataProfile, CompanyMarketProfile
-from invest_ml.db.models.universe import UniverseDefinition, UniverseMembership
-from invest_ml.db.models.financials import RawSourceVersion, XbrlFact, CanonicalMetric
-from invest_ml.db.models.market import PriceBar
 from invest_ml.db.models.features import FeatureDefinition, FeatureSetDefinition, FeatureSnapshot
-from invest_ml.db.models.modeling import Label, TrainingDataset, ModelRun, Prediction
+from invest_ml.db.models.financials import CanonicalMetric, RawSourceVersion, XbrlFact
+from invest_ml.db.models.market import PriceBar
+from invest_ml.db.models.modeling import Label, ModelRun, Prediction, TrainingDataset
+from invest_ml.db.models.profiling import CompanyDataProfile
+from invest_ml.db.models.universe import UniverseDefinition, UniverseMembership
 
 
 class CompanyCatalogRepository(Protocol):

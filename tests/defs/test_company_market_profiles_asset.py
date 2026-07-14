@@ -27,7 +27,6 @@ def _make_equity_resource() -> MagicMock:
     resource = MagicMock()
     resource.maximum_symbols_per_run = 100
     resource.build_price_provider.return_value = MagicMock()
-    resource.build_market_cap_provider.return_value = None
     return resource
 
 
@@ -54,10 +53,8 @@ def _mock_result() -> CompanyMarketProfileResult:
         profiles_succeeded=45,
         profiles_not_found=3,
         profiles_temporary_failure=2,
-        market_cap_disabled=True,
         metadata_requests=50,
         price_requests=47,
-        market_cap_requests=0,
     )
 
 
@@ -105,23 +102,6 @@ def test_asset_config_passes_correct_universe():
     assert config.profile_version == "market_profile_v1"
 
 
-def test_asset_uses_no_market_cap_provider_when_disabled():
-    pg = _make_postgres_resource()
-    equity = _make_equity_resource()
-
-    with (
-        patch(_LOAD_MARKET, return_value=_market_config()),
-        patch(_SERVICE_PATH) as MockService,
-    ):
-        service_inst = MockService.return_value
-        service_inst.materialize.return_value = _mock_result()
-
-        ctx = build_asset_context()
-        company_market_profiles(ctx, postgres=pg, equity_market_data=equity)
-
-    equity.build_market_cap_provider.assert_called_once()
-
-
 def test_asset_passes_symbol_overrides_to_providers():
     pg = _make_postgres_resource()
     equity = _make_equity_resource()
@@ -139,4 +119,3 @@ def test_asset_passes_symbol_overrides_to_providers():
         company_market_profiles(ctx, postgres=pg, equity_market_data=equity)
 
     equity.build_price_provider.assert_called_once_with({"BRK-B": "BRK.B"})
-    equity.build_market_cap_provider.assert_called_once_with({"BRK-B": "BRK.B"})

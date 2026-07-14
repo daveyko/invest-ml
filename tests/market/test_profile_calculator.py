@@ -103,8 +103,6 @@ def test_no_bars_returns_no_usable_bars_status():
         history,
         as_of_date=AS_OF,
         config=_config(),
-        current_market_cap=None,
-        market_cap_status="not_available",
     )
     assert result.status == "no_usable_bars"
     assert result.first_price_date is None
@@ -119,8 +117,6 @@ def test_basic_calculation_success():
         history,
         as_of_date=AS_OF,
         config=_config(),
-        current_market_cap=None,
-        market_cap_status="not_available",
     )
     assert result.status == "success"
     assert result.latest_price_date == AS_OF
@@ -135,8 +131,6 @@ def test_first_price_date_from_metadata():
         history,
         as_of_date=AS_OF,
         config=_config(),
-        current_market_cap=None,
-        market_cap_status="not_available",
     )
     assert result.first_price_date == date(2010, 1, 4)
 
@@ -150,8 +144,6 @@ def test_price_history_years_from_metadata_start_date():
         history,
         as_of_date=AS_OF,
         config=_config(),
-        current_market_cap=None,
-        market_cap_status="not_available",
     )
     expected = (AS_OF - start).days / 365.2425
     assert result.price_history_years == pytest.approx(expected, rel=1e-4)
@@ -166,8 +158,6 @@ def test_history_truncated_flag_when_metadata_start_before_request_window():
         history,
         as_of_date=AS_OF,
         config=_config(),
-        current_market_cap=None,
-        market_cap_status="not_available",
     )
     assert result.history_truncated_by_requested_window is True
 
@@ -181,8 +171,6 @@ def test_history_not_truncated_when_metadata_start_within_window():
         history,
         as_of_date=AS_OF,
         config=_config(),
-        current_market_cap=None,
-        market_cap_status="not_available",
     )
     assert result.history_truncated_by_requested_window is False
 
@@ -195,8 +183,6 @@ def test_adjusted_close_used_for_latest():
         history,
         as_of_date=AS_OF,
         config=_config(),
-        current_market_cap=None,
-        market_cap_status="not_available",
     )
     assert result.latest_adjusted_close == pytest.approx(98.0)
 
@@ -209,25 +195,8 @@ def test_close_used_when_no_adjusted_close():
         history,
         as_of_date=AS_OF,
         config=_config(),
-        current_market_cap=None,
-        market_cap_status="not_available",
     )
     assert result.latest_adjusted_close == pytest.approx(75.0)
-
-
-def test_current_market_cap_propagated():
-    bars = [_bar(AS_OF)]
-    calc = _calculator()
-    history = _history(bars)
-    result = calc.calculate(
-        history,
-        as_of_date=AS_OF,
-        config=_config(),
-        current_market_cap=Decimal("5000000000"),
-        market_cap_status="success",
-    )
-    assert result.current_market_cap == pytest.approx(5_000_000_000.0)
-    assert result.quality_flags["market_cap_status"] == "success"
 
 
 def test_zero_close_bars_excluded_from_valids():
@@ -238,8 +207,6 @@ def test_zero_close_bars_excluded_from_valids():
         history,
         as_of_date=AS_OF,
         config=_config(),
-        current_market_cap=None,
-        market_cap_status="not_available",
     )
     assert result.status == "no_usable_bars"
 
@@ -252,8 +219,6 @@ def test_median_dollar_volume_no_volume():
         history,
         as_of_date=AS_OF,
         config=_config(),
-        current_market_cap=None,
-        market_cap_status="not_available",
     )
     assert result.median_daily_dollar_volume is None
 
@@ -277,7 +242,5 @@ def test_missing_ratio_all_present():
         history,
         as_of_date=AS_OF,
         config=_config(),
-        current_market_cap=None,
-        market_cap_status="not_available",
     )
     assert result.missing_trading_day_ratio == pytest.approx(0.0, abs=0.01)

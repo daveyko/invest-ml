@@ -1,7 +1,6 @@
 """Generate predictions from a promoted model for the scoring universe."""
 
 from datetime import date
-from uuid import UUID
 
 from invest_ml.db.models.modeling import ModelRun, Prediction
 

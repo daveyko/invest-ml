@@ -9,12 +9,7 @@ from __future__ import annotations
 import json
 from datetime import date
 
-import pytest
-
 from invest_ml.sec.submissions import (
-    CatalogCompany,
-    CatalogSecurity,
-    ParseResult,
     SubmissionCompanyParser,
     _normalize_cik,
     _normalize_fiscal_year_end,

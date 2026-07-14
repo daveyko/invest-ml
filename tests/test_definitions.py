@@ -4,7 +4,6 @@ the expected assets, jobs, and schedules.
 No database connections or network requests are made.
 """
 
-import pytest
 
 
 def test_defs_imports() -> None:

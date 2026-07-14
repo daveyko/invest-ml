@@ -362,5 +362,4 @@ def _to_row(
         "ingested_at": ingested_at,
         "last_refreshed_at": ingested_at,
         "quality_flags": {},
-        "market_cap": None,
     }
