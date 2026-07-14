@@ -7,7 +7,7 @@ from invest_ml.defs.resources import ArtifactStoreResource, PostgresResource
 
 @asset(
     group_name="ml",
-    deps=["feature_snapshots", "price_bars"],
+    deps=["feature_snapshots", "selected_price_bars"],
     description=(
         "Realized labels for feature snapshots whose horizon has elapsed. "
         "Labels intentionally use future price data; feature construction must not."

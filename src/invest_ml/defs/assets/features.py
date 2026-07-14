@@ -27,7 +27,7 @@ def feature_registry(
 
 @asset(
     group_name="ml",
-    deps=["canonical_metrics", "price_bars", "feature_registry"],
+    deps=["canonical_metrics", "selected_price_bars", "feature_registry"],
     description=(
         "Immutable computed feature vectors for all training/scoring universe members. "
         "If upstream data changes, a new snapshot is inserted (never updated). "

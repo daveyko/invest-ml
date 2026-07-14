@@ -16,3 +16,6 @@ class SymbolResolver:
 
     def resolve(self, instrument: EquityInstrument) -> str:
         return self._overrides.get(instrument.ticker, instrument.ticker)
+
+    def resolve_ticker(self, ticker: str) -> str:
+        return self._overrides.get(ticker, ticker)

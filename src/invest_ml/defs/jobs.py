@@ -31,7 +31,7 @@ market_refresh_job = define_asset_job(
         "company_market_profiles",
         "training_universe",
         "scoring_universe",
-        "price_bars",
+        "selected_price_bars",
     ),
     description="Refresh market profiles, rebuild universe gates, ingest daily price bars.",
 )

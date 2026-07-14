@@ -22,6 +22,7 @@ EXPECTED_TABLES = {
     "xbrl_facts",
     "canonical_metrics",
     "price_bars",
+    "price_bar_sync_state",
     "feature_definitions",
     "feature_set_definitions",
     "feature_snapshots",
