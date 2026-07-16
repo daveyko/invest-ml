@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import UUID
 
 from sqlalchemy import select, update
@@ -23,27 +23,73 @@ class UniverseRepository:
 
     # ── Universe definition ───────────────────────────────────────────────────
 
-    def find_universe_definition(self, name: str, version: str) -> UniverseDefinition | None:
+    def find_universe_definition(
+        self,
+        name: str,
+        version: str,
+        as_of_date: date | None = None,
+    ) -> UniverseDefinition | None:
+        """Find a universe definition by (name, version, as_of_date).
+
+        When as_of_date is None, returns only the row where as_of_date IS NULL
+        (the non-partitioned case).  Pass an explicit date to find a specific
+        monthly partition.
+        """
+        stmt = select(UniverseDefinition).where(
+            UniverseDefinition.name == name,
+            UniverseDefinition.version == version,
+        )
+        if as_of_date is not None:
+            stmt = stmt.where(UniverseDefinition.as_of_date == as_of_date)
+        else:
+            stmt = stmt.where(UniverseDefinition.as_of_date.is_(None))
+        return self._s.execute(stmt).scalar_one_or_none()
+
+    def find_latest_universe_definition(
+        self, name: str, version: str
+    ) -> UniverseDefinition | None:
+        """Return the definition with the most recent as_of_date, or the NULL row."""
         return self._s.execute(
-            select(UniverseDefinition).where(
+            select(UniverseDefinition)
+            .where(
                 UniverseDefinition.name == name,
                 UniverseDefinition.version == version,
             )
+            .order_by(UniverseDefinition.as_of_date.desc().nullslast())
+            .limit(1)
         ).scalar_one_or_none()
 
     def create_universe_definition(
-        self, name: str, version: str, purpose: str, criteria: dict
+        self,
+        name: str,
+        version: str,
+        purpose: str,
+        criteria: dict,
+        as_of_date: date | None = None,
     ) -> UniverseDefinition:
         defn = UniverseDefinition(
             name=name,
             version=version,
             purpose=purpose,
             criteria=criteria,
+            as_of_date=as_of_date,
             created_at=datetime.now(tz=UTC),
         )
         self._s.add(defn)
         self._s.flush()
         return defn
+
+    def count_active_memberships(self, universe_id: UUID) -> int:
+        """Count memberships with included_until IS NULL for a given universe."""
+        from sqlalchemy import func
+
+        result = self._s.execute(
+            select(func.count()).where(
+                UniverseMembership.universe_id == universe_id,
+                UniverseMembership.included_until.is_(None),
+            )
+        ).scalar_one()
+        return result or 0
 
     # ── Memberships ───────────────────────────────────────────────────────────
 
@@ -314,12 +360,15 @@ class UniverseRepository:
         from invest_ml.db.models.company import Company, Security
         from invest_ml.universe.scoring import ScoringCompanyInput
 
-        # 1. Get training universe definition
+        # 1. Get training universe definition (latest partition for partitioned universes)
         training_def = self._s.execute(
-            select(UniverseDefinition).where(
+            select(UniverseDefinition)
+            .where(
                 UniverseDefinition.name == training_universe_name,
                 UniverseDefinition.version == training_universe_version,
             )
+            .order_by(UniverseDefinition.as_of_date.desc().nullslast())
+            .limit(1)
         ).scalar_one_or_none()
         if training_def is None:
             return []
@@ -387,6 +436,259 @@ class UniverseRepository:
             )
         return result
 
+    def load_training_company_inputs_point_in_time(  # noqa: PLR0912, PLR0914
+        self,
+        *,
+        candidate_universe_name: str,
+        candidate_universe_version: str,
+        as_of_date: date,
+        normalization_version: str,
+        market_profile_version: str,
+        total_canonical_metrics: int,
+        liquidity_lookback_sessions: int,
+        missing_ratio_lookback_years: int,
+    ) -> list:
+        """Load candidate companies with financial/market eligibility computed point-in-time.
+
+        Financial eligibility comes from canonical_metrics where
+        available_at <= as_of_date.  Market eligibility comes from price_bars
+        where trading_date <= as_of_date.  No pre-computed profile tables are
+        read.
+        """
+        from collections import defaultdict
+        from datetime import datetime, timedelta
+        from decimal import Decimal
+        from statistics import median as _median
+
+        from invest_ml.db.models.company import Company, Security
+        from invest_ml.db.models.financials import CanonicalMetric
+        from invest_ml.db.models.market import PriceBar
+        from invest_ml.universe.security_selector import EligibleSecurityInput
+        from invest_ml.universe.training import TrainingCompanyInput
+
+        # 1. Candidate universe definition (non-partitioned)
+        cand_def = self._s.execute(
+            select(UniverseDefinition).where(
+                UniverseDefinition.name == candidate_universe_name,
+                UniverseDefinition.version == candidate_universe_version,
+                UniverseDefinition.as_of_date.is_(None),
+            )
+        ).scalar_one_or_none()
+        if cand_def is None:
+            return []
+
+        # 2. Candidate company IDs active as of as_of_date
+        candidate_company_ids: list = list(
+            self._s.execute(
+                select(UniverseMembership.company_id).where(
+                    UniverseMembership.universe_id == cand_def.universe_id,
+                    UniverseMembership.included_from <= as_of_date,
+                    (UniverseMembership.included_until.is_(None))
+                    | (UniverseMembership.included_until > as_of_date),
+                )
+            ).scalars().all()
+        )
+        if not candidate_company_ids:
+            return []
+
+        # 3. Load companies
+        companies_by_id = {
+            c.company_id: c
+            for c in self._s.execute(
+                select(Company).where(Company.company_id.in_(candidate_company_ids))
+            ).scalars().all()
+        }
+
+        # 4. Load canonical_metrics data as of as_of_date (distinct rows only)
+        canonical_rows = self._s.execute(
+            select(
+                CanonicalMetric.company_id,
+                CanonicalMetric.metric_name,
+                CanonicalMetric.period_type,
+                CanonicalMetric.fiscal_year,
+                CanonicalMetric.fiscal_period,
+            )
+            .where(
+                CanonicalMetric.company_id.in_(candidate_company_ids),
+                CanonicalMetric.available_at <= as_of_date,
+                CanonicalMetric.normalization_version == normalization_version,
+            )
+            .distinct()
+        ).all()
+
+        annual_metric_names: dict[UUID, set] = defaultdict(set)
+        annual_fiscal_years: dict[UUID, set] = defaultdict(set)
+        quarterly_period_pairs: dict[UUID, set] = defaultdict(set)
+
+        for row in canonical_rows:
+            cid = row.company_id
+            if row.period_type == "annual" and row.fiscal_year is not None:
+                annual_metric_names[cid].add(row.metric_name)
+                annual_fiscal_years[cid].add(row.fiscal_year)
+            elif (
+                row.period_type == "quarter"
+                and row.fiscal_year is not None
+                and row.fiscal_period is not None
+            ):
+                quarterly_period_pairs[cid].add((row.fiscal_year, row.fiscal_period))
+
+        # 5. Load currently-observed securities
+        securities_by_company: dict = defaultdict(list)
+        all_securities = self._s.execute(
+            select(Security).where(
+                Security.company_id.in_(candidate_company_ids),
+                Security.is_currently_reported_by_sec.is_(True),
+            )
+        ).scalars().all()
+        for s in all_securities:
+            securities_by_company[s.company_id].append(s)
+
+        # 6. Load price bars in window for all securities
+        all_security_ids = [s.security_id for s in all_securities]
+        bars_by_security: dict = defaultdict(list)
+        first_date_by_security: dict = {}
+        latest_date_by_security: dict = {}
+
+        if all_security_ids:
+            # Window covers the missing-ratio lookback plus extra buffer
+            lookback_days = int(missing_ratio_lookback_years * 365 + 60)
+            window_start = as_of_date - timedelta(days=lookback_days)
+
+            bar_rows = self._s.execute(
+                select(
+                    PriceBar.security_id,
+                    PriceBar.trading_date,
+                    PriceBar.close,
+                    PriceBar.volume,
+                    PriceBar.adjusted_close,
+                )
+                .where(
+                    PriceBar.security_id.in_(all_security_ids),
+                    PriceBar.trading_date <= as_of_date,
+                    PriceBar.trading_date >= window_start,
+                )
+                .order_by(PriceBar.security_id, PriceBar.trading_date)
+            ).all()
+
+            for row in bar_rows:
+                bars_by_security[row.security_id].append(row)
+
+            # Get all-time first and latest date outside the window
+            from sqlalchemy import func as _func
+
+            date_range_rows = self._s.execute(
+                select(
+                    PriceBar.security_id,
+                    _func.min(PriceBar.trading_date).label("first_date"),
+                    _func.max(PriceBar.trading_date).label("latest_date"),
+                )
+                .where(
+                    PriceBar.security_id.in_(all_security_ids),
+                    PriceBar.trading_date <= as_of_date,
+                )
+                .group_by(PriceBar.security_id)
+            ).all()
+            for dr in date_range_rows:
+                first_date_by_security[dr.security_id] = dr.first_date
+                latest_date_by_security[dr.security_id] = dr.latest_date
+
+        # 7. Compute EligibleSecurityInput per security
+        _EXPECTED_SESSIONS_PER_YEAR = 252
+        scanned_dt = datetime.combine(as_of_date, datetime.min.time()).replace(
+            tzinfo=UTC
+        )
+
+        def _build_sec_input(sec) -> EligibleSecurityInput:
+            sid = sec.security_id
+            bars = bars_by_security.get(sid, [])
+            first_d = first_date_by_security.get(sid)
+            latest_d = latest_date_by_security.get(sid)
+
+            if first_d and latest_d:
+                price_history_years = Decimal(
+                    str(round((latest_d - first_d).days / 365.25, 4))
+                )
+            else:
+                price_history_years = None
+
+            latest_adj_close = (
+                Decimal(str(bars[-1].adjusted_close))
+                if bars and bars[-1].adjusted_close is not None
+                else None
+            )
+
+            recent = bars[-liquidity_lookback_sessions:] if bars else []
+            dollar_vols = [
+                float(b.close) * float(b.volume)
+                for b in recent
+                if b.close is not None and b.volume is not None and float(b.close) > 0
+            ]
+            median_dv = Decimal(str(round(_median(dollar_vols), 2))) if dollar_vols else None
+
+            if bars:
+                expected = missing_ratio_lookback_years * _EXPECTED_SESSIONS_PER_YEAR
+                ratio = max(0.0, 1.0 - len(bars) / expected)
+                missing_ratio = Decimal(str(round(ratio, 6)))
+            else:
+                missing_ratio = Decimal("1.0")
+
+            has_data = latest_adj_close is not None
+
+            return EligibleSecurityInput(
+                security_id=sid,
+                company_id=sec.company_id,
+                ticker=sec.ticker,
+                exchange=sec.exchange,
+                currently_observed=sec.is_currently_reported_by_sec,
+                market_profile_version=market_profile_version if has_data else None,
+                market_profile_scanned_at=scanned_dt if has_data else None,
+                market_profile_status="success" if has_data else None,
+                first_price_date=first_d,
+                latest_price_date=latest_d,
+                price_history_years=price_history_years,
+                median_daily_dollar_volume=median_dv,
+                current_market_cap=None,
+                missing_trading_day_ratio=missing_ratio,
+                latest_adjusted_close=latest_adj_close,
+            )
+
+        # 8. Assemble TrainingCompanyInput objects
+        result = []
+        total = max(total_canonical_metrics, 1)
+        for company_id in candidate_company_ids:
+            company = companies_by_id.get(company_id)
+            if company is None:
+                continue
+
+            ann_names = annual_metric_names.get(company_id, set())
+            ann_years = annual_fiscal_years.get(company_id, set())
+            q_pairs = quarterly_period_pairs.get(company_id, set())
+
+            annual_periods = len(ann_years)
+            quarterly_periods = len(q_pairs)
+            coverage = Decimal(str(round(len(ann_names) / total, 4)))
+
+            raw_securities = securities_by_company.get(company_id, [])
+            eligible_securities = tuple(_build_sec_input(s) for s in raw_securities)
+
+            result.append(
+                TrainingCompanyInput(
+                    company_id=company_id,
+                    cik=company.cik,
+                    legal_name=company.legal_name,
+                    candidate_membership_active=True,
+                    company_data_profile_version=(
+                        normalization_version if annual_periods > 0 else None
+                    ),
+                    annual_periods=annual_periods,
+                    quarterly_periods=quarterly_periods,
+                    canonical_metric_coverage=coverage,
+                    company_data_quality_flags={},
+                    securities=eligible_securities,
+                )
+            )
+        return result
+
     def _build_eligible_security_input(self, security, market_profile):
         from decimal import Decimal
 
@@ -430,17 +732,22 @@ class UniverseRepository:
     ) -> list:
         """Return active training-universe members as SelectedCompany objects, sorted by CIK.
 
-        Deduplicates by CIK in case the same company appears multiple times.
-        CIKs are zero-padded to 10 digits.
+        For partitioned universes (multiple rows with the same name/version) the
+        latest as_of_date row is used.  For non-partitioned universes the single
+        row is returned as before.  Deduplicates by CIK.  CIKs are zero-padded
+        to 10 digits.
         """
         from invest_ml.db.models.company import Company
         from invest_ml.xbrl.models import SelectedCompany
 
         universe_def = self._s.execute(
-            select(UniverseDefinition).where(
+            select(UniverseDefinition)
+            .where(
                 UniverseDefinition.name == universe_name,
                 UniverseDefinition.version == universe_version,
             )
+            .order_by(UniverseDefinition.as_of_date.desc().nullslast())
+            .limit(1)
         ).scalar_one_or_none()
         if universe_def is None:
             return []

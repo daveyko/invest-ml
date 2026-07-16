@@ -44,6 +44,11 @@ def load_market_data_config(version: str = "v1") -> dict[str, Any]:
     return _load_yaml(f"market_data_{version}.yaml")
 
 
+def load_training_universe_config(version: str = "v1") -> dict[str, Any]:
+    """Load the monthly-partitioned training universe config from configs/universes/."""
+    return _load_yaml(f"universes/training_universe_{version}.yaml")
+
+
 def load_feature_registry_config(name: str, version: str) -> dict[str, Any]:
     """Load a versioned feature registry config from configs/features/<name>_<version>.yaml."""
     return _load_yaml(f"features/{name}_{version}.yaml")

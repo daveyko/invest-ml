@@ -20,6 +20,138 @@ from invest_ml.universe.security_selector import (
     SecuritySelectionResult,
 )
 
+# ── Partition config ──────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class TrainingUniversePartitionConfig:
+    """Config for the monthly-partitioned point-in-time training universe.
+
+    Eligibility is evaluated against canonical_metrics (available_at <= as_of_date)
+    and price_bars (trading_date <= as_of_date) rather than pre-computed profile
+    tables.  The eligibility thresholds are identical to the non-partitioned
+    TrainingUniverseConfig.
+    """
+
+    name: str
+    version: str
+    candidate_universe_name: str
+    candidate_universe_version: str
+    normalization_version: str
+    market_profile_version: str
+    minimum_annual_periods: int
+    minimum_quarterly_periods: int
+    minimum_canonical_metric_coverage: Decimal
+    minimum_price_history_years: Decimal
+    minimum_median_daily_dollar_volume: Decimal
+    maximum_missing_trading_day_ratio: Decimal
+    require_latest_adjusted_close: bool
+    minimum_market_cap: Decimal | None
+    liquidity_lookback_sessions: int
+    missing_ratio_lookback_years: int
+    partition_start_date: str
+
+    @classmethod
+    def from_dict(cls, raw: dict) -> TrainingUniversePartitionConfig:
+        cand = raw.get("candidate_universe", {})
+        return cls(
+            name=raw["name"],
+            version=raw["version"],
+            candidate_universe_name=cand.get("name", "candidate"),
+            candidate_universe_version=str(cand.get("version", "v1")),
+            normalization_version=raw.get("normalization_version", "canonical_metrics_v1"),
+            market_profile_version=raw.get("market_profile_version", "point_in_time_v1"),
+            minimum_annual_periods=int(raw.get("minimum_annual_periods", 3)),
+            minimum_quarterly_periods=int(raw.get("minimum_quarterly_periods", 0)),
+            minimum_canonical_metric_coverage=Decimal(
+                str(raw.get("minimum_canonical_metric_coverage", "0.80"))
+            ),
+            minimum_price_history_years=Decimal(
+                str(raw.get("minimum_price_history_years", "3"))
+            ),
+            minimum_median_daily_dollar_volume=Decimal(
+                str(raw.get("minimum_median_daily_dollar_volume", "2000000"))
+            ),
+            maximum_missing_trading_day_ratio=Decimal(
+                str(raw.get("maximum_missing_trading_day_ratio", "0.02"))
+            ),
+            require_latest_adjusted_close=bool(raw.get("require_latest_adjusted_close", True)),
+            minimum_market_cap=(
+                Decimal(str(raw["minimum_market_cap"]))
+                if raw.get("minimum_market_cap") is not None
+                else None
+            ),
+            liquidity_lookback_sessions=int(raw.get("liquidity_lookback_sessions", 90)),
+            missing_ratio_lookback_years=int(raw.get("missing_ratio_lookback_years", 3)),
+            partition_start_date=str(raw.get("partition_start_date", "2015-01-01")),
+        )
+
+    def criteria_hash(self) -> str:
+        relevant = {
+            "name": self.name,
+            "version": self.version,
+            "candidate_universe_name": self.candidate_universe_name,
+            "candidate_universe_version": self.candidate_universe_version,
+            "normalization_version": self.normalization_version,
+            "minimum_annual_periods": self.minimum_annual_periods,
+            "minimum_quarterly_periods": self.minimum_quarterly_periods,
+            "minimum_canonical_metric_coverage": str(self.minimum_canonical_metric_coverage),
+            "minimum_price_history_years": str(self.minimum_price_history_years),
+            "minimum_median_daily_dollar_volume": str(self.minimum_median_daily_dollar_volume),
+            "maximum_missing_trading_day_ratio": str(self.maximum_missing_trading_day_ratio),
+            "require_latest_adjusted_close": self.require_latest_adjusted_close,
+            "minimum_market_cap": (
+                str(self.minimum_market_cap) if self.minimum_market_cap is not None else None
+            ),
+            "liquidity_lookback_sessions": self.liquidity_lookback_sessions,
+            "missing_ratio_lookback_years": self.missing_ratio_lookback_years,
+        }
+        return hashlib.sha256(
+            json.dumps(relevant, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+
+    def to_criteria_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "version": self.version,
+            "candidate_universe_name": self.candidate_universe_name,
+            "candidate_universe_version": self.candidate_universe_version,
+            "normalization_version": self.normalization_version,
+            "minimum_annual_periods": self.minimum_annual_periods,
+            "minimum_quarterly_periods": self.minimum_quarterly_periods,
+            "minimum_canonical_metric_coverage": str(self.minimum_canonical_metric_coverage),
+            "minimum_price_history_years": str(self.minimum_price_history_years),
+            "minimum_median_daily_dollar_volume": str(self.minimum_median_daily_dollar_volume),
+            "maximum_missing_trading_day_ratio": str(self.maximum_missing_trading_day_ratio),
+            "require_latest_adjusted_close": self.require_latest_adjusted_close,
+            "minimum_market_cap": (
+                str(self.minimum_market_cap) if self.minimum_market_cap is not None else None
+            ),
+            "liquidity_lookback_sessions": self.liquidity_lookback_sessions,
+            "missing_ratio_lookback_years": self.missing_ratio_lookback_years,
+        }
+
+    def to_training_universe_config(self) -> TrainingUniverseConfig:
+        """Convert to TrainingUniverseConfig for use with TrainingUniverseEvaluator."""
+        return TrainingUniverseConfig(
+            name=self.name,
+            version=self.version,
+            candidate_universe_name=self.candidate_universe_name,
+            candidate_universe_version=self.candidate_universe_version,
+            company_data_profile_version=self.normalization_version,
+            market_profile_version=self.market_profile_version,
+            minimum_annual_periods=self.minimum_annual_periods,
+            minimum_quarterly_periods=self.minimum_quarterly_periods,
+            minimum_canonical_metric_coverage=self.minimum_canonical_metric_coverage,
+            minimum_price_history_years=self.minimum_price_history_years,
+            minimum_median_daily_dollar_volume=self.minimum_median_daily_dollar_volume,
+            maximum_missing_trading_day_ratio=self.maximum_missing_trading_day_ratio,
+            maximum_market_profile_age_days=9999,
+            require_market_profile_status="success",
+            require_latest_adjusted_close=self.require_latest_adjusted_close,
+            minimum_market_cap=self.minimum_market_cap,
+        )
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
 
@@ -169,6 +301,24 @@ class TrainingUniverseResult:
     exclusion_counts: Mapping[str, int]
     universe_id: UUID
     criteria_hash: str
+
+
+@dataclass(frozen=True)
+class TrainingUniversePartitionResult:
+    """Result for one monthly partition of the point-in-time training universe."""
+
+    as_of_date: date
+    evaluated_companies: int
+    included_companies: int
+    newly_included: int
+    already_present: bool
+    criteria_hash: str
+    universe_id: UUID
+    exclusion_counts: Mapping[str, int] = None  # type: ignore[assignment]
+
+    def __post_init__(self):
+        if self.exclusion_counts is None:
+            object.__setattr__(self, "exclusion_counts", {})
 
 
 # ── Evaluator ─────────────────────────────────────────────────────────────────

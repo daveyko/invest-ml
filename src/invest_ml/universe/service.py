@@ -318,6 +318,133 @@ class TrainingUniverseService:
         )
 
 
+# ── Monthly-partitioned training universe service ────────────────────────────
+
+
+class TrainingUniversePartitionService:
+    """Materialize one monthly partition of the point-in-time training universe.
+
+    Each call creates exactly one universe_definitions row keyed by
+    (name, version, as_of_date) and inserts membership rows for all companies
+    that passed eligibility as of that date.
+
+    The operation is idempotent: if the (name, version, as_of_date) row already
+    exists the method returns immediately with the current member count.
+    """
+
+    def __init__(self, session_factory) -> None:
+        self._session_factory = session_factory
+
+    def materialize(
+        self,
+        *,
+        as_of_date: date,
+        config,
+        total_canonical_metrics: int,
+    ):
+        from invest_ml.db.repositories.universe import UniverseRepository
+        from invest_ml.universe.training import (
+            TrainingUniverseEvaluator,
+            TrainingUniversePartitionResult,
+        )
+
+        criteria_hash = config.criteria_hash()
+
+        # ── 1. Idempotency check ──────────────────────────────────────────────
+        with self._session_factory() as session:
+            repo = UniverseRepository(session)
+            existing = repo.find_universe_definition(config.name, config.version, as_of_date)
+            if existing is not None:
+                membership_count = repo.count_active_memberships(existing.universe_id)
+                return TrainingUniversePartitionResult(
+                    as_of_date=as_of_date,
+                    evaluated_companies=0,
+                    included_companies=membership_count,
+                    newly_included=0,
+                    already_present=True,
+                    criteria_hash=criteria_hash,
+                    universe_id=existing.universe_id,
+                )
+
+        # ── 2. Load point-in-time candidate inputs ────────────────────────────
+        with self._session_factory() as session:
+            repo = UniverseRepository(session)
+            companies = repo.load_training_company_inputs_point_in_time(
+                candidate_universe_name=config.candidate_universe_name,
+                candidate_universe_version=config.candidate_universe_version,
+                as_of_date=as_of_date,
+                normalization_version=config.normalization_version,
+                market_profile_version=config.market_profile_version,
+                total_canonical_metrics=total_canonical_metrics,
+                liquidity_lookback_sessions=config.liquidity_lookback_sessions,
+                missing_ratio_lookback_years=config.missing_ratio_lookback_years,
+            )
+
+        # ── 3. Evaluate ───────────────────────────────────────────────────────
+        eligibility_config = config.to_training_universe_config()
+        evaluator = TrainingUniverseEvaluator()
+        decisions = [
+            evaluator.evaluate(c, as_of_date=as_of_date, config=eligibility_config)
+            for c in companies
+        ]
+        included = [d for d in decisions if d.included]
+
+        criteria_dict = {
+            **config.to_criteria_dict(),
+            "criteria_hash": criteria_hash,
+            "as_of_date": as_of_date.isoformat(),
+        }
+
+        # ── 4. Persist atomically (definition + memberships) ──────────────────
+        with self._session_factory() as session:
+            repo = UniverseRepository(session)
+            universe_def = repo.create_universe_definition(
+                name=config.name,
+                version=config.version,
+                purpose="training",
+                criteria=criteria_dict,
+                as_of_date=as_of_date,
+            )
+
+            for decision in included:
+                repo.insert_membership(
+                    universe_id=universe_def.universe_id,
+                    company_id=decision.company_id,
+                    security_id=decision.selected_security.security_id,
+                    included_from=as_of_date,
+                    inclusion_reasons=decision.inclusion_reasons,
+                )
+
+            session.commit()
+
+        # ── 5. Stats ──────────────────────────────────────────────────────────
+        exclusion_counts: dict[str, int] = {}
+        for d in decisions:
+            if not d.included:
+                for code in d.exclusion_reasons.get("reason_codes", []):
+                    exclusion_counts[code] = exclusion_counts.get(code, 0) + 1
+
+        logger.info(
+            "training_universe_partition: as_of_date=%s evaluated=%d included=%d "
+            "universe_id=%s",
+            as_of_date,
+            len(decisions),
+            len(included),
+            universe_def.universe_id,
+        )
+
+        return TrainingUniversePartitionResult(
+            as_of_date=as_of_date,
+            evaluated_companies=len(decisions),
+            included_companies=len(included),
+            newly_included=len(included),
+            already_present=False,
+            criteria_hash=criteria_hash,
+            universe_id=universe_def.universe_id,
+            exclusion_counts=exclusion_counts,
+        )
+
+
 # ── Scoring universe service ─────────────────────────────────────────────────
 
 
