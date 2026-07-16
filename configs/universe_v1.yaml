@@ -138,9 +138,10 @@ scoring:
   version: "v1"
 
   # Source universe: only companies with an active training membership are evaluated.
+  # Points to the new monthly-partitioned training universe.
   training_universe:
-    name: training_universe
-    version: "v1"
+    name: training
+    version: training_v1
 
   # Model buckets (defined in sic_buckets_v1.yaml) whose SIC codes qualify a company
   # for scoring. A company matching any listed bucket is included.

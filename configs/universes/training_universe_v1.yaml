@@ -1,0 +1,54 @@
+# Monthly point-in-time training universe.
+#
+# Each Dagster partition materializes one universe_definitions row keyed by
+# (name, version, as_of_date=last-day-of-month).  Eligibility is evaluated
+# using only data that was available at that date:
+#   - canonical_metrics with available_at <= as_of_date
+#   - price_bars with trading_date <= as_of_date
+#
+# The eligibility thresholds are identical to the non-partitioned training
+# universe.  Only the data access layer changes.
+
+name: training
+version: training_v1
+
+candidate_universe:
+  name: candidate
+  version: v1
+
+# canonical_metrics.normalization_version used for financial eligibility
+normalization_version: canonical_metrics_v1
+
+# Sentinel value written to EligibleSecurityInput.market_profile_version.
+# Must match this field exactly for security selection to proceed.
+market_profile_version: point_in_time_v1
+
+# Alias for TrainingUniverseConfig.from_dict compatibility — equals
+# normalization_version above.
+company_data_profile_version: canonical_metrics_v1
+
+# Financial history thresholds
+minimum_annual_periods: 3
+minimum_quarterly_periods: 0
+minimum_canonical_metric_coverage: 0.80
+
+# Market / investability thresholds
+minimum_price_history_years: 3
+minimum_median_daily_dollar_volume: 2000000
+maximum_missing_trading_day_ratio: 0.02
+
+# Always passes — market-profile age is not applicable when metrics are computed
+# on the fly from price bars.
+maximum_market_profile_age_days: 9999
+require_market_profile_status: success
+require_latest_adjusted_close: true
+
+# Optional market-cap floor (null = disabled)
+minimum_market_cap: null
+
+# Price-bar aggregation windows
+liquidity_lookback_sessions: 90    # sessions for median dollar-volume
+missing_ratio_lookback_years: 3    # years for missing-session ratio
+
+# ISO date of the first Dagster monthly partition
+partition_start_date: "2015-01-01"

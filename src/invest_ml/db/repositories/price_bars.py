@@ -44,10 +44,23 @@ class PriceBarsRepository:
     ) -> Sequence[SelectedPriceSecurity]:
         """Return one selected security per active training-universe company.
 
-        Uses the security_id already persisted by the training_universe asset.
-        Deduplicates by security_id and sorts by (ticker, security_id) for
-        deterministic ordering.
+        For partitioned universes (multiple rows with the same name/version) the
+        latest as_of_date partition is used.  Deduplicates by security_id and
+        sorts by (ticker, security_id) for deterministic ordering.
         """
+        # Find the latest partition's universe_id (handles both partitioned and
+        # non-partitioned universes via nullslast ordering)
+        latest_uid_subq = (
+            select(UniverseDefinition.universe_id)
+            .where(
+                UniverseDefinition.name == universe_name,
+                UniverseDefinition.version == universe_version,
+            )
+            .order_by(UniverseDefinition.as_of_date.desc().nullslast())
+            .limit(1)
+            .scalar_subquery()
+        )
+
         rows = self._s.execute(
             select(
                 UniverseMembership.security_id,
@@ -55,14 +68,9 @@ class PriceBarsRepository:
                 Security.ticker,
                 Security.exchange,
             )
-            .join(
-                UniverseDefinition,
-                UniverseDefinition.universe_id == UniverseMembership.universe_id,
-            )
             .join(Security, Security.security_id == UniverseMembership.security_id)
             .where(
-                UniverseDefinition.name == universe_name,
-                UniverseDefinition.version == universe_version,
+                UniverseMembership.universe_id == latest_uid_subq,
                 UniverseMembership.security_id.is_not(None),
                 UniverseMembership.included_from <= as_of_date,
                 (UniverseMembership.included_until.is_(None))

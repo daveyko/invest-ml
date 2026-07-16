@@ -26,13 +26,12 @@ def xbrl_facts(
     postgres: PostgresResource,
     sec_bulk: SecBulkResource,
 ) -> None:
-    from invest_ml.config.loaders import load_canonical_metrics, load_universe_config
+    from invest_ml.config.loaders import load_canonical_metrics, load_training_universe_config
     from invest_ml.db.repositories.universe import UniverseRepository
     from invest_ml.sec.companyfacts_flattener import CompanyFactsFlattener
     from invest_ml.xbrl.service import XbrlFactsIngestionService
 
-    universe_cfg = load_universe_config()
-    training_cfg = universe_cfg["training"]
+    training_cfg = load_training_universe_config()
     universe_name: str = training_cfg["name"]
     universe_version: str = training_cfg["version"]
 

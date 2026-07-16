@@ -17,6 +17,11 @@ class UniverseDefinition(Base):
       personal_watchlist - ad-hoc user-defined list
 
     Criteria is the machine-readable filter specification stored as JSONB.
+
+    as_of_date is set for monthly-partitioned training-universe rows and NULL
+    for non-partitioned universes (candidate, scoring).
+    The unique constraint on (name, version, as_of_date) enforces one row per
+    partition; NULL rows rely on application-level duplicate prevention.
     """
 
     __tablename__ = "universe_definitions"
@@ -30,6 +35,7 @@ class UniverseDefinition(Base):
     version: Mapped[str] = mapped_column(Text, nullable=False)
     purpose: Mapped[str] = mapped_column(Text, nullable=False)
     criteria: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    as_of_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
@@ -37,7 +43,10 @@ class UniverseDefinition(Base):
             "purpose IN ('candidate', 'training', 'scoring', 'personal_watchlist')",
             name="ck_universe_definitions_purpose",
         ),
-        UniqueConstraint("name", "version", name="uq_universe_definitions_name_version"),
+        UniqueConstraint(
+            "name", "version", "as_of_date",
+            name="uq_universe_definitions_name_version_date",
+        ),
     )
 
 

@@ -4,7 +4,13 @@ import logging
 import time
 from datetime import UTC, datetime
 
-from dagster import AssetExecutionContext, MaterializeResult, MetadataValue, asset
+from dagster import (
+    AssetExecutionContext,
+    MaterializeResult,
+    MetadataValue,
+    MonthlyPartitionsDefinition,
+    asset,
+)
 
 from invest_ml.defs.resources import (
     ArtifactStoreResource,
@@ -726,78 +732,97 @@ def company_market_profiles(
 _TRAINING_UNIVERSE_SOURCE = "training_universe"
 _SCORING_UNIVERSE_SOURCE = "scoring_universe"
 
+_training_universe_partitions = MonthlyPartitionsDefinition(start_date="2015-01-01")
+
 
 @asset(
     group_name="discovery",
     deps=["company_market_profiles"],
+    partitions_def=_training_universe_partitions,
     description=(
-        "Broad universe of financially eligible companies with a selected representative "
-        "security. Data-quality driven only — no thematic filters."
+        "Monthly point-in-time snapshot of financially eligible training-universe companies. "
+        "Each partition materializes one universe_definitions row keyed by "
+        "(training, training_v1, as_of_date=month-end). "
+        "Eligibility uses canonical_metrics (available_at <= as_of_date) and "
+        "price_bars (trading_date <= as_of_date). "
+        "Data-quality driven only — no thematic filters."
     ),
 )
 def training_universe(
     context: AssetExecutionContext,
     postgres: PostgresResource,
 ) -> MaterializeResult:
-    """Evaluate all candidate-universe members and persist training-universe memberships.
+    """Evaluate candidate-universe members for one monthly partition.
 
     Flow
     ----
-    1. Parse TrainingUniverseConfig from universe_v1.yaml.
-    2. Create an IngestionRun.
-    3. Call TrainingUniverseService.materialize() — creates/validates the
-       UniverseDefinition, runs deterministic security selection, diffs active
-       memberships, and persists changes atomically.
-    4. Mark run succeeded with aggregate statistics.
-    5. On any failure: mark run failed, re-raise.
+    1. Resolve the calendar month-end as_of_date from the partition key.
+    2. Parse TrainingUniversePartitionConfig from configs/universes/training_universe_v1.yaml.
+    3. Create an IngestionRun.
+    4. If the partition was already materialized, skip and return current count.
+    5. Load candidate inputs point-in-time (canonical_metrics + price_bars).
+    6. Evaluate with TrainingUniverseEvaluator using the same eligibility thresholds.
+    7. Persist one universe_definitions row + membership rows atomically.
+    8. Mark run succeeded.
+    9. On failure: mark run failed, re-raise.
     """
     from datetime import date
 
-    from invest_ml.config.loaders import load_universe_config
+    from dateutil.relativedelta import relativedelta
+
+    from invest_ml.config.loaders import load_canonical_metrics, load_training_universe_config
     from invest_ml.db.repositories.universe import UniverseRepository
-    from invest_ml.universe.service import TrainingUniverseService
-    from invest_ml.universe.training import TrainingUniverseConfig
+    from invest_ml.universe.service import TrainingUniversePartitionService
+    from invest_ml.universe.training import TrainingUniversePartitionConfig
+
+    # ── Resolve month-end as_of_date ──────────────────────────────────────────
+    partition_key = context.partition_key  # e.g. "2024-01-01"
+    month_start = date.fromisoformat(partition_key)
+    as_of_date = month_start + relativedelta(months=1) - relativedelta(days=1)
 
     session_factory = postgres.get_session_factory()
-    as_of_date = date.today()
     t_start = time.monotonic()
 
-    universe_cfg = load_universe_config()
-    config = TrainingUniverseConfig.from_dict(universe_cfg.get("training", {}))
+    raw_cfg = load_training_universe_config()
+    config = TrainingUniversePartitionConfig.from_dict(raw_cfg)
+
+    canonical_cfg = load_canonical_metrics()
+    total_canonical_metrics = len(canonical_cfg.get("metrics") or {})
 
     with session_factory() as session:
         repo = UniverseRepository(session)
         run = repo.create_ingestion_run(
             source=_TRAINING_UNIVERSE_SOURCE,
-            source_uri=f"{config.name}:{config.version}",
+            source_uri=f"{config.name}:{config.version}:{as_of_date.isoformat()}",
             started_at=datetime.now(tz=UTC),
         )
         session.commit()
         run_id = run.run_id
 
-    context.log.info("Created IngestionRun %s for training_universe", run_id)
+    context.log.info(
+        "IngestionRun %s for training_universe partition %s (as_of_date=%s)",
+        run_id, partition_key, as_of_date,
+    )
 
     try:
-        service = TrainingUniverseService(session_factory=session_factory)
-        result = service.materialize(as_of_date=as_of_date, config=config)
+        service = TrainingUniversePartitionService(session_factory=session_factory)
+        result = service.materialize(
+            as_of_date=as_of_date,
+            config=config,
+            total_canonical_metrics=total_canonical_metrics,
+        )
 
         with session_factory() as session:
             repo = UniverseRepository(session)
             repo.succeed_ingestion_run(
                 run_id,
                 entities_checked=result.evaluated_companies,
-                entities_changed=(
-                    result.newly_included
-                    + result.newly_excluded
-                    + result.selected_security_changes
-                ),
+                entities_changed=result.newly_included,
                 extra_metadata={
                     "included": result.included_companies,
                     "newly_included": result.newly_included,
-                    "already_included": result.already_included,
-                    "newly_excluded": result.newly_excluded,
-                    "selected_security_changes": result.selected_security_changes,
-                    "exclusion_counts": result.exclusion_counts,
+                    "already_present": result.already_present,
+                    "exclusion_counts": dict(result.exclusion_counts) if result.exclusion_counts else {},
                     "criteria_hash": result.criteria_hash,
                     "as_of_date": as_of_date.isoformat(),
                 },
@@ -806,34 +831,33 @@ def training_universe(
 
         duration = time.monotonic() - t_start
         context.log.info(
-            "training_universe complete: evaluated=%d included=%d "
-            "newly_included=%d security_changes=%d newly_excluded=%d duration=%.1fs",
+            "training_universe partition %s complete: evaluated=%d included=%d "
+            "already_present=%s duration=%.1fs",
+            as_of_date,
             result.evaluated_companies,
             result.included_companies,
-            result.newly_included,
-            result.selected_security_changes,
-            result.newly_excluded,
+            result.already_present,
             duration,
         )
 
         return MaterializeResult(
             metadata={
+                "partition": MetadataValue.text(partition_key),
+                "as_of_date": MetadataValue.text(as_of_date.isoformat()),
                 "universe_id": MetadataValue.text(str(result.universe_id)),
                 "criteria_hash": MetadataValue.text(result.criteria_hash[:16] + "..."),
                 "evaluated_companies": MetadataValue.int(result.evaluated_companies),
                 "included_companies": MetadataValue.int(result.included_companies),
                 "newly_included": MetadataValue.int(result.newly_included),
-                "already_included": MetadataValue.int(result.already_included),
-                "newly_excluded": MetadataValue.int(result.newly_excluded),
-                "selected_security_changes": MetadataValue.int(result.selected_security_changes),
-                "as_of_date": MetadataValue.text(as_of_date.isoformat()),
+                "already_present": MetadataValue.bool(result.already_present),
+                "total_canonical_metrics": MetadataValue.int(total_canonical_metrics),
                 "duration_seconds": MetadataValue.float(round(duration, 1)),
             }
         )
 
     except Exception as exc:
         error_text = f"{type(exc).__name__}: {exc}"
-        context.log.error("training_universe failed: %s", error_text)
+        context.log.error("training_universe partition %s failed: %s", as_of_date, error_text)
         try:
             with session_factory() as session:
                 repo = UniverseRepository(session)
